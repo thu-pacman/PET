@@ -1,6 +1,6 @@
-#include "operator.h"
 #include "common.h"
 #include "graph.h"
+#include "operator.h"
 #include "perf_engine.h"
 #include "tensor.h"
 #include <chrono>
@@ -1221,7 +1221,8 @@ SplitOp::compute(size_t idx, DimRange dr) {
     for (size_t i = 0; i < idx; ++i) {
         inputPos[dim] += outputs[i]->getDims()[dim];
     }
-    return {{DimRange(inputPos)}, [this, pos, idx, inputPos]() {
+    return {{DimRange(inputPos)},
+            [this, pos, idx, inputPos]() {
                 outputs[idx]->dataMalloc();
                 return outputs[idx]->setData(pos, inputs[0]->getData(inputPos));
             }};
@@ -1479,7 +1480,8 @@ TransposeOp::compute(DimRange dr) {
         }
     }
 
-    return {{DimRange(inputPos)}, [this, pos, inputPos]() {
+    return {{DimRange(inputPos)},
+            [this, pos, inputPos]() {
                 outputs[0]->dataMalloc();
                 return outputs[0]->setData(pos, inputs[0]->getData(inputPos));
             }};
@@ -1566,16 +1568,16 @@ Dim TransposeOp::computeShape() {
 double TransposeOp::perf(PerfEngine *pe, int rounds, int warmupRounds) {
     if (inputs[0]->getType() == Tensor::Weight) {
         return 0;
-    }
-    else if (inputs[0]->getOutputOf() != nullptr && inputs[0]->getOutputOf()->getType() == Transpose) {
+    } else if (inputs[0]->getOutputOf() != nullptr &&
+               inputs[0]->getOutputOf()->getType() == Transpose) {
         return 0;
-    }
-    else {
-    	auto mdenv = getenv("PET_MUTATION_DEPTH");
+    } else {
+        auto mdenv = getenv("PET_MUTATION_DEPTH");
         if (mdenv != nullptr)
-	    return 0;
-	else 
-            return inputs[0]->size() * sizeof(float) * 2 / (400.0 * 1024 * 1024);
+            return 0;
+        else
+            return inputs[0]->size() * sizeof(float) * 2 /
+                   (400.0 * 1024 * 1024);
         // Too large overhead
         // CodeEngine code_engine;
         // code_engine.genTransposeCompute(*this);
@@ -1797,7 +1799,8 @@ ExtendOp::compute(DimRange dr) {
     auto pos = dr.getBegin();
     auto inputPos = pos;
     inputPos[dim] %= iDim[dim];
-    return {{DimRange(inputPos)}, [this, pos, inputPos]() {
+    return {{DimRange(inputPos)},
+            [this, pos, inputPos]() {
                 outputs[0]->dataMalloc();
                 return outputs[0]->setData(pos, inputs[0]->getData(inputPos));
             }};
@@ -2757,6 +2760,239 @@ void ActivationOp::initHash() {
     hash = type;
     hash = hashAppend(hash, actType);
     hash = hashPack(hash);
+}
+
+void ConvOp::getOptypeAttr(
+    std::string &optype, std::map<std::string, std::string> &attr,
+    std::map<std::string, std::vector<int>> &extra) const {
+    optype = "Conv";
+    auto input = inputs[0], weight = inputs[1];
+    auto r = weight->getDims()[2];
+    auto s = weight->getDims()[3];
+    auto g = input->getDims()[1] / weight->getDims()[1];
+    attr["dilations"] =
+        "[" + std::to_string(dh) + "," + std::to_string(dw) + "]"; // "[1, 1]";
+    attr["group"] = std::to_string(g);                             // "1";
+    attr["kernel_shape"] =
+        "[" + std::to_string(r) + "," + std::to_string(s) + "]"; // "[1, 1]";
+    std::string pad = std::to_string(ph) + "," + std::to_string(pw);
+    attr["pads"] = "[" + pad + "," + pad + "]"; // "[0, 0, 0, 0]";
+    attr["strides"] =
+        "[" + std::to_string(sh) + "," + std::to_string(sw) + "]"; // "[1, 1]";
+
+    if (bias != nullptr) {
+        Dim dim = bias->getDims();
+        std::string name = "bias_" + std::to_string(getGuid());
+        extra[name] = dim;
+    }
+
+    if (act == ActType::Relu) {
+        attr["act"] = "Relu";
+    } else {
+        if (act == ActType::Sigmoid) {
+            attr["act"] = "Sigmoid";
+        }
+    }
+}
+
+void MatmulOp::getOptypeAttr(
+    std::string &optype, std::map<std::string, std::string> &attr,
+    std::map<std::string, std::vector<int>> &extra) const {
+    optype = "MatMul";
+
+    if (bias != nullptr) {
+        Dim dim = bias->getDims();
+        std::string name = "bias_" + std::to_string(getGuid());
+        extra[name] = dim;
+    }
+}
+
+void PadOp::getOptypeAttr(
+    std::string &optype, std::map<std::string, std::string> &attr,
+    std::map<std::string, std::vector<int>> &extra) const {
+    optype = "Pad";
+    attr["mode"] = "constant";
+
+    std::vector<int> pads;
+    for (auto x : begin)
+        pads.emplace_back(x);
+    for (auto x : end)
+        pads.emplace_back(x);
+    std::string name = "pads_" + std::to_string(getGuid());
+    extra[name] = pads;
+}
+
+void SliceOp::getOptypeAttr(
+    std::string &optype, std::map<std::string, std::string> &attr,
+    std::map<std::string, std::vector<int>> &extra) const {
+    optype = "Slice";
+
+    std::string guid_str = std::to_string(getGuid());
+    extra["starts_" + guid_str] = begin;
+    extra["ends_" + guid_str] = end;
+}
+
+void ConcatOp::getOptypeAttr(
+    std::string &optype, std::map<std::string, std::string> &attr,
+    std::map<std::string, std::vector<int>> &extra) const {
+    optype = "Concat";
+    attr["axis"] = std::to_string(dim);
+}
+
+void SplitOp::getOptypeAttr(
+    std::string &optype, std::map<std::string, std::string> &attr,
+    std::map<std::string, std::vector<int>> &extra) const {
+    optype = "Split";
+    attr["axis"] = std::to_string(dim);
+
+    std::string name = "split_" + std::to_string(getGuid());
+    extra[name] = sizes;
+}
+
+void TransposeOp::getOptypeAttr(
+    std::string &optype, std::map<std::string, std::string> &attr,
+    std::map<std::string, std::vector<int>> &extra) const {
+    // TODO
+}
+
+void ExtendOp::getOptypeAttr(
+    std::string &optype, std::map<std::string, std::string> &attr,
+    std::map<std::string, std::vector<int>> &extra) const {
+    optype = "Extend";
+    // TODO: attributes
+}
+
+void BatchNormOp::getOptypeAttr(
+    std::string &optype, std::map<std::string, std::string> &attr,
+    std::map<std::string, std::vector<int>> &extra) const {
+    optype = "BatchNormalization";
+    attr["epsilon"] = std::to_string(epsilon);
+    attr["momentum"] = std::to_string(momentum);
+
+    if (scale != nullptr) {
+        Dim dim = scale->getDims();
+        std::string name = "scale_" + std::to_string(getGuid());
+        extra[name] = dim;
+    }
+    if (bias != nullptr) {
+        Dim dim = bias->getDims();
+        std::string name = "bias_" + std::to_string(getGuid());
+        extra[name] = dim;
+    }
+    if (mean != nullptr) {
+        Dim dim = mean->getDims();
+        std::string name = "mean_" + std::to_string(getGuid());
+        extra[name] = dim;
+    }
+    if (var != nullptr) {
+        Dim dim = var->getDims();
+        std::string name = "var_" + std::to_string(getGuid());
+        extra[name] = dim;
+    }
+}
+
+void MaxPoolOp::getOptypeAttr(
+    std::string &optype, std::map<std::string, std::string> &attr,
+    std::map<std::string, std::vector<int>> &extra) const {
+    optype = "MaxPool";
+    attr["auto_pad"] = "NOTSET";
+    attr["dilations"] =
+        "[" + std::to_string(dh) + "," + std::to_string(dw) + "]";
+    attr["kernel_shape"] =
+        "[" + std::to_string(kh) + "," + std::to_string(kw) + "]";
+    std::string pad = std::to_string(ph) + "," + std::to_string(pw);
+    attr["pads"] = "[" + pad + "," + pad + "]"; // "[0, 0, 0, 0]";
+    attr["strides"] = "[" + std::to_string(sh) + "," + std::to_string(sw) + "]";
+}
+
+void AvgPoolOp::getOptypeAttr(
+    std::string &optype, std::map<std::string, std::string> &attr,
+    std::map<std::string, std::vector<int>> &extra) const {
+    optype = "AveragePool";
+    attr["auto_pad"] = "NOTSET";
+    attr["count_include_pad"] = "0";
+    attr["kernel_shape"] =
+        "[" + std::to_string(kh) + "," + std::to_string(kw) + "]";
+    std::string pad = std::to_string(ph) + "," + std::to_string(pw);
+    attr["pads"] = "[" + pad + "," + pad + "]"; // "[0, 0, 0, 0]";
+    attr["strides"] = "[" + std::to_string(sh) + "," + std::to_string(sw) + "]";
+}
+
+void AddOp::getOptypeAttr(
+    std::string &optype, std::map<std::string, std::string> &attr,
+    std::map<std::string, std::vector<int>> &extra) const {
+    optype = "Add";
+}
+
+void SubOp::getOptypeAttr(
+    std::string &optype, std::map<std::string, std::string> &attr,
+    std::map<std::string, std::vector<int>> &extra) const {
+    optype = "Sub";
+}
+
+void MulOp::getOptypeAttr(
+    std::string &optype, std::map<std::string, std::string> &attr,
+    std::map<std::string, std::vector<int>> &extra) const {
+    optype = "Mul";
+}
+
+void DivOp::getOptypeAttr(
+    std::string &optype, std::map<std::string, std::string> &attr,
+    std::map<std::string, std::vector<int>> &extra) const {
+    optype = "Div";
+}
+
+void PowOp::getOptypeAttr(
+    std::string &optype, std::map<std::string, std::string> &attr,
+    std::map<std::string, std::vector<int>> &extra) const {
+    optype = "Pow"; // TODO: add input as power if required
+}
+
+void GatherOp::getOptypeAttr(
+    std::string &optype, std::map<std::string, std::string> &attr,
+    std::map<std::string, std::vector<int>> &extra) const {
+    optype = "Gather";
+    attr["axis"] = axis;
+}
+
+void ReduceMeanOp::getOptypeAttr(
+    std::string &optype, std::map<std::string, std::string> &attr,
+    std::map<std::string, std::vector<int>> &extra) const {
+    optype = "ReduceMean";
+    attr["axes"] = axis;
+    attr["keepdims"] = "1";
+}
+
+void ReshapeOp::getOptypeAttr(
+    std::string &optype, std::map<std::string, std::string> &attr,
+    std::map<std::string, std::vector<int>> &extra) const {
+    optype = "Reshape";
+    // TODO: compute or store the shape
+}
+
+void IdentityOp::getOptypeAttr(
+    std::string &optype, std::map<std::string, std::string> &attr,
+    std::map<std::string, std::vector<int>> &extra) const {
+    optype = "Identity";
+}
+
+void SoftmaxOp::getOptypeAttr(
+    std::string &optype, std::map<std::string, std::string> &attr,
+    std::map<std::string, std::vector<int>> &extra) const {
+    optype = "Softmax";
+    attr["axis"] = axis;
+}
+
+void ActivationOp::getOptypeAttr(
+    std::string &optype, std::map<std::string, std::string> &attr,
+    std::map<std::string, std::vector<int>> &extra) const {
+    optype = "None";
+    if (actType == Operator::ActType::Relu) {
+        optype = "Relu";
+    }
+    if (actType == Operator::ActType::Sigmoid) {
+        optype = "Sigmoid";
+    }
 }
 
 } // end of namespace tpm

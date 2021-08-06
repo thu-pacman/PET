@@ -1,6 +1,6 @@
-#include "graph.h"
 #include "common.h"
 #include "ffi.h"
+#include "graph.h"
 #include "operator.h"
 #include "tensor.h"
 #include <string>
@@ -24,10 +24,9 @@ PYBIND11_EMBEDDED_MODULE(cpp_module, m) {
              static_cast<Tensor *(Graph::*)(const Dim &, const std::string &)>(
                  &Graph::tensor),
              py::return_value_policy::reference_internal)
-        .def("conv",
-             static_cast<Operator *(Graph::*)(Tensor *, Tensor *, Tensor *, int,
-                                              int, int, int, int, int,
-                                              Tensor *)>(&Graph::conv),
+        .def("conv", static_cast<Operator *(
+                         Graph::*)(Tensor *, Tensor *, Tensor *, int, int, int,
+                                   int, int, int, Tensor *)>(&Graph::conv),
              py::return_value_policy::reference_internal)
         .def("pad",
              static_cast<Operator *(Graph::*)(Tensor *, Tensor *, const Dim &,
@@ -65,9 +64,8 @@ PYBIND11_EMBEDDED_MODULE(cpp_module, m) {
              static_cast<Operator *(Graph::*)(Tensor *, Tensor *, int, int, int,
                                               int, int, int)>(&Graph::avgpool),
              py::return_value_policy::reference_internal)
-        .def("avgpool",
-             static_cast<Operator *(Graph::*)(Tensor *, Tensor *)>(
-                 &Graph::avgpool),
+        .def("avgpool", static_cast<Operator *(Graph::*)(Tensor *, Tensor *)>(
+                            &Graph::avgpool),
              py::return_value_policy::reference_internal)
         .def("add",
              static_cast<Operator *(Graph::*)(const TensorVec &, Tensor *)>(
@@ -85,9 +83,8 @@ PYBIND11_EMBEDDED_MODULE(cpp_module, m) {
              static_cast<Operator *(Graph::*)(Tensor *, Tensor *, Tensor *)>(
                  &Graph::div),
              py::return_value_policy::reference_internal)
-        .def("pow",
-             static_cast<Operator *(Graph::*)(Tensor *, Tensor *, int)>(
-                 &Graph::pow),
+        .def("pow", static_cast<Operator *(Graph::*)(Tensor *, Tensor *, int)>(
+                        &Graph::pow),
              py::return_value_policy::reference_internal)
         .def("gather",
              static_cast<Operator *(Graph::*)(Tensor *, Tensor *, Tensor *,
@@ -101,26 +98,22 @@ PYBIND11_EMBEDDED_MODULE(cpp_module, m) {
              static_cast<Operator *(Graph::*)(Tensor *, Tensor *, int)>(
                  &Graph::softmax),
              py::return_value_policy::reference_internal)
-        .def("reshape",
-             static_cast<Operator *(Graph::*)(Tensor *, Tensor *)>(
-                 &Graph::reshape),
+        .def("reshape", static_cast<Operator *(Graph::*)(Tensor *, Tensor *)>(
+                            &Graph::reshape),
              py::return_value_policy::reference_internal)
-        .def("sigmoid",
-             static_cast<Operator *(Graph::*)(Tensor *, Tensor *)>(
-                 &Graph::sigmoid),
+        .def("sigmoid", static_cast<Operator *(Graph::*)(Tensor *, Tensor *)>(
+                            &Graph::sigmoid),
              py::return_value_policy::reference_internal)
-        .def(
-            "relu",
-            static_cast<Operator *(Graph::*)(Tensor *, Tensor *)>(&Graph::relu),
-            py::return_value_policy::reference_internal)
+        .def("relu", static_cast<Operator *(Graph::*)(Tensor *, Tensor *)>(
+                         &Graph::relu),
+             py::return_value_policy::reference_internal)
         .def("batchnorm",
              static_cast<Operator *(Graph::*)(Tensor *, Tensor *, Tensor *,
                                               Tensor *, Tensor *, Tensor *,
                                               float, float)>(&Graph::batchnorm),
              py::return_value_policy::reference_internal)
-        .def("identity",
-             static_cast<Operator *(Graph::*)(Tensor *, Tensor *)>(
-                 &Graph::identity),
+        .def("identity", static_cast<Operator *(Graph::*)(Tensor *, Tensor *)>(
+                             &Graph::identity),
              py::return_value_policy::reference_internal)
         .def("split",
              static_cast<Operator *(Graph::*)(Tensor *, const TensorVec &, int,
@@ -602,6 +595,156 @@ bool Graph::importOnnx(const char *net) {
     }
 
     updateConnection();
+    return true;
+}
+
+bool GraphBase::exportOnnx(const char *path) {
+    std::vector<std::string> tensor_name;
+    std::map<std::string, std::string> tensor_dtype;
+    std::map<std::string, std::vector<int>> tensor_dim;
+    std::vector<std::string> initializer;
+    std::vector<std::string> op_name;
+    std::map<std::string, std::vector<std::string>> op_input, op_output;
+    std::map<std::string, std::map<std::string, std::string>> op_attr;
+    std::map<std::string, std::vector<int>> tensor_value;
+
+    auto &tensors = getTensors();
+    for (auto &tensor : tensors) {
+        size_t guid = tensor->getGuid();
+        Tensor::DataType dtype = tensor->getDType();
+        Dim dim = tensor->getDims();
+        Tensor::TensorType ttype = tensor->getType();
+
+        std::string name = "tensor_" + std::to_string(guid);
+        std::string dtype_str = "";
+        if (dtype == Tensor::DataType::Float32) {
+            dtype_str = "Float32";
+        } else {
+            dtype_str = "Int32";
+        }
+        tensor_name.emplace_back(name);
+        tensor_dtype[name] = dtype_str;
+        tensor_dim[name] = dim;
+
+        if (ttype == Tensor::TensorType::Weight) {
+            initializer.emplace_back(name);
+        } else {
+            if (ttype == Tensor::TensorType::Invalid) {
+                std::cout << "Invalid tensor founded!" << std::endl;
+            }
+            if (ttype == Tensor::TensorType::NotCounted) {
+                std::cout << "Notcounted tensor founded!" << std::endl;
+            }
+        }
+    }
+
+    auto &operators = getOperators();
+    for (auto &op : operators) {
+        if (op->isTransposeOp()) {
+            Tensor *inp = op->getInputs()[0];
+            Tensor *oup = op->getOutputs()[0];
+            std::string last = "tensor_" + std::to_string(inp->getGuid());
+            Dim last_dim = inp->getDims();
+
+            TransposeOp *trop = dynamic_cast<TransposeOp *>(op);
+            const std::vector<std::shared_ptr<TransBasic>> &totop =
+                trop->getTTParam();
+            for (size_t i = 0, iEnd = totop.size(); i < iEnd; ++i) {
+                std::string outp = "";
+                if (i == iEnd - 1) {
+                    outp = "tensor_" + std::to_string(oup->getGuid());
+                } else {
+                    outp = "tensor_tr_" + std::to_string(op->getGuid()) + "_" +
+                           std::to_string(i);
+                    tensor_name.emplace_back(outp);
+                    tensor_dtype[outp] = tensor_dtype[last];
+                }
+                std::string optype = "";
+                std::vector<int> extra;
+                totop[i]->getOptypeDim(optype, last_dim, extra);
+
+                if (i < iEnd - 1)
+                    tensor_dim[outp] = last_dim;
+                std::string opname = optype + "_tr_" +
+                                     std::to_string(op->getGuid()) + "_" +
+                                     std::to_string(i);
+                op_name.emplace_back(opname);
+                op_input[opname] = {last};
+                op_output[opname] = {outp};
+                last = outp;
+
+                if (optype == "Reshape") {
+                    tensor_value[opname + "_shape"] = extra;
+                    std::map<std::string, std::string> attr;
+                    op_attr[opname] = attr;
+                }
+                if (optype == "Transpose") {
+                    std::map<std::string, std::string> attr;
+                    std::string perm = "";
+                    for (auto x : extra)
+                        perm += std::to_string(x) + ",";
+                    perm.pop_back();
+                    attr["perm"] = "[" + perm + "]";
+                    op_attr[opname] = attr;
+                }
+            }
+            continue;
+        }
+
+        size_t guid = op->getGuid();
+        std::vector<std::string> inp, oup;
+
+        auto &inputtensors = op->getInputs();
+        for (auto &tensor : inputtensors) {
+            size_t guid = tensor->getGuid();
+            std::string name = "tensor_" + std::to_string(guid);
+            inp.emplace_back(name);
+        }
+
+        auto &outputtensors = op->getOutputs();
+        for (auto &tensor : outputtensors) {
+            size_t guid = tensor->getGuid();
+            std::string name = "tensor_" + std::to_string(guid);
+            oup.emplace_back(name);
+        }
+
+        std::string optype;
+        std::map<std::string, std::string> attr;
+        std::map<std::string, std::vector<int>> extra;
+        op->getOptypeAttr(optype, attr, extra);
+
+        for (auto it = extra.begin(); it != extra.end(); ++it) {
+            std::string name = it->first;
+            tensor_name.emplace_back(name);
+            tensor_dtype[name] = "Float32";
+            tensor_dim[name] = it->second;
+            initializer.emplace_back(name);
+            inp.emplace_back(name);
+        }
+
+        std::string opname = optype + "_" + std::to_string(guid);
+        op_name.emplace_back(opname);
+        op_input[opname] = inp;
+        op_output[opname] = oup;
+        op_attr[opname] = attr;
+    }
+
+    start_interpreter();
+    try {
+        py::module::import("cpp_plugin")
+            .attr("export_onnx")(path, tensor_name, tensor_dtype, tensor_dim,
+                                 initializer, op_name, op_input, op_output,
+                                 op_attr, tensor_value);
+    } catch (py::error_already_set &e) {
+        if (e.matches(PyExc_ImportError)) {
+            std::cerr << "Import Error. Don't forget to set environment "
+                         "variable PYTHONPATH to contain "
+                         "<repo-root>/python"
+                      << std::endl;
+        }
+        throw;
+    }
+
     return true;
 }
 

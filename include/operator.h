@@ -183,6 +183,10 @@ class Operator {
         assert(false);
     }
 
+    virtual void
+    getOptypeAttr(std::string &optype, std::map<std::string, std::string> &attr,
+                  std::map<std::string, std::vector<int>> &extra) const = 0;
+
   protected:
     const size_t guid;
     uint64_t hash;
@@ -274,6 +278,10 @@ class ConvOp : public Operator {
     int getSh() const { return sh; }
     int getSw() const { return sw; }
 
+    void getOptypeAttr(
+        std::string &optype, std::map<std::string, std::string> &attr,
+        std::map<std::string, std::vector<int>> &extra) const override;
+
     ConvArgs getArgs(int withPenalty) const {
         auto input = inputs[0], weight = inputs[1];
         auto n = input->getDims()[0] + withPenalty * input->getPenalty()[0];
@@ -350,6 +358,10 @@ class MatmulOp : public Operator {
         return os.str();
     }
 
+    void getOptypeAttr(
+        std::string &optype, std::map<std::string, std::string> &attr,
+        std::map<std::string, std::vector<int>> &extra) const override;
+
     int numInputs() override { return 2; }
     int numOutputs() override { return 1; }
 
@@ -410,6 +422,10 @@ class PadOp : public Operator {
     const Dim &getBegin() const { return begin; }
     const Dim &getEnd() const { return end; }
 
+    void getOptypeAttr(
+        std::string &optype, std::map<std::string, std::string> &attr,
+        std::map<std::string, std::vector<int>> &extra) const override;
+
   private:
     Dim begin, end;
 };
@@ -443,6 +459,10 @@ class SliceOp : public Operator {
 
     const Dim &getBegin() const { return begin; }
     const Dim &getEnd() const { return end; }
+
+    void getOptypeAttr(
+        std::string &optype, std::map<std::string, std::string> &attr,
+        std::map<std::string, std::vector<int>> &extra) const override;
 
   private:
     Dim begin, end;
@@ -519,6 +539,10 @@ class ConcatOp : public Operator {
     void inferSplittingPoints() override;
 
     int getDim() const { return dim; }
+
+    void getOptypeAttr(
+        std::string &optype, std::map<std::string, std::string> &attr,
+        std::map<std::string, std::vector<int>> &extra) const override;
 
   private:
     int dim;
@@ -598,9 +622,9 @@ class SplitOp : public Operator {
         std::ostringstream os;
         os << "Split(dim=" << dim << ",num=" << num
            << ",in=" << inputs[0]->getHash() << ",o1=" << outputs[0]->getHash()
-           << ",o2=" << outputs[1]->getHash()
-           << ", dims = [" << outputs[0]->getDims()[dim] << ", "
-           << outputs[1]->getDims()[dim] << "]"
+           << ",o2=" << outputs[1]->getHash() << ", dims = ["
+           << outputs[0]->getDims()[dim] << ", " << outputs[1]->getDims()[dim]
+           << "]"
            << ")";
         return os.str();
     }
@@ -610,6 +634,10 @@ class SplitOp : public Operator {
     int numOutputs() override { return 2; }
 
     int getDim() const { return dim; }
+
+    void getOptypeAttr(
+        std::string &optype, std::map<std::string, std::string> &attr,
+        std::map<std::string, std::vector<int>> &extra) const override;
 
   private:
     int dim, num;
@@ -776,6 +804,10 @@ class TransposeOp : public Operator {
         padding_w = w;
     }
 
+    void getOptypeAttr(
+        std::string &optype, std::map<std::string, std::string> &attr,
+        std::map<std::string, std::vector<int>> &extra) const override;
+
   private:
     int split, factor;
     TransType trans_type;
@@ -827,6 +859,10 @@ class ExtendOp : public Operator {
 
     int getDim() const { return dim; }
     int getNum() const { return num; }
+
+    void getOptypeAttr(
+        std::string &optype, std::map<std::string, std::string> &attr,
+        std::map<std::string, std::vector<int>> &extra) const override;
 
   private:
     int dim, num;
@@ -882,6 +918,10 @@ class BatchNormOp : public Operator {
     int numInputs() override { return 1; }
 
     int numOutputs() override { return 1; }
+
+    void getOptypeAttr(
+        std::string &optype, std::map<std::string, std::string> &attr,
+        std::map<std::string, std::vector<int>> &extra) const override;
 
   private:
     float epsilon, momentum;
@@ -944,6 +984,10 @@ class MaxPoolOp : public Operator {
     int getPw() const { return pw; }
     int getSh() const { return sh; }
     int getSw() const { return sw; }
+
+    void getOptypeAttr(
+        std::string &optype, std::map<std::string, std::string> &attr,
+        std::map<std::string, std::vector<int>> &extra) const override;
 
   private:
     int kh, kw;
@@ -1017,6 +1061,10 @@ class AvgPoolOp : public Operator {
     int getSh() const { return sh; }
     int getSw() const { return sw; }
 
+    void getOptypeAttr(
+        std::string &optype, std::map<std::string, std::string> &attr,
+        std::map<std::string, std::vector<int>> &extra) const override;
+
   private:
     int kh, kw;
     int ph, pw;
@@ -1064,6 +1112,10 @@ class AddOp : public Operator {
     int numInputs() override { return 2; }
 
     int numOutputs() override { return 1; }
+
+    void getOptypeAttr(
+        std::string &optype, std::map<std::string, std::string> &attr,
+        std::map<std::string, std::vector<int>> &extra) const override;
 };
 
 class SubOp : public Operator {
@@ -1101,6 +1153,10 @@ class SubOp : public Operator {
     int numInputs() override { return 2; }
 
     int numOutputs() override { return 1; }
+
+    void getOptypeAttr(
+        std::string &optype, std::map<std::string, std::string> &attr,
+        std::map<std::string, std::vector<int>> &extra) const override;
 };
 
 class MulOp : public Operator {
@@ -1144,6 +1200,10 @@ class MulOp : public Operator {
     int numInputs() override { return 2; }
 
     int numOutputs() override { return 1; }
+
+    void getOptypeAttr(
+        std::string &optype, std::map<std::string, std::string> &attr,
+        std::map<std::string, std::vector<int>> &extra) const override;
 };
 
 class DivOp : public Operator {
@@ -1181,6 +1241,10 @@ class DivOp : public Operator {
     int numInputs() override { return 2; }
 
     int numOutputs() override { return 1; }
+
+    void getOptypeAttr(
+        std::string &optype, std::map<std::string, std::string> &attr,
+        std::map<std::string, std::vector<int>> &extra) const override;
 };
 
 class PowOp : public Operator {
@@ -1219,6 +1283,10 @@ class PowOp : public Operator {
     int numInputs() override { return 1; }
 
     int numOutputs() override { return 1; }
+
+    void getOptypeAttr(
+        std::string &optype, std::map<std::string, std::string> &attr,
+        std::map<std::string, std::vector<int>> &extra) const override;
 
   private:
     int pow;
@@ -1266,6 +1334,10 @@ class GatherOp : public Operator {
     int numOutputs() override { return 1; }
 
     int getAxis() const { return axis; }
+
+    void getOptypeAttr(
+        std::string &optype, std::map<std::string, std::string> &attr,
+        std::map<std::string, std::vector<int>> &extra) const override;
 
   private:
     int axis;
@@ -1315,6 +1387,10 @@ class ReduceMeanOp : public Operator {
 
     int numOutputs() override { return 1; }
 
+    void getOptypeAttr(
+        std::string &optype, std::map<std::string, std::string> &attr,
+        std::map<std::string, std::vector<int>> &extra) const override;
+
   private:
     int axis;
 };
@@ -1362,6 +1438,10 @@ class ReshapeOp : public Operator {
     int numInputs() override { return 1; }
 
     int numOutputs() override { return 1; }
+
+    void getOptypeAttr(
+        std::string &optype, std::map<std::string, std::string> &attr,
+        std::map<std::string, std::vector<int>> &extra) const override;
 };
 
 class IdentityOp : public Operator {
@@ -1408,6 +1488,10 @@ class IdentityOp : public Operator {
     void inferSplittingPoints() override {
         outputs[0]->setSplittingPoints(*inputs[0]->getSplittingPoints());
     };
+
+    void getOptypeAttr(
+        std::string &optype, std::map<std::string, std::string> &attr,
+        std::map<std::string, std::vector<int>> &extra) const override;
 };
 
 class SoftmaxOp : public Operator {
@@ -1454,6 +1538,10 @@ class SoftmaxOp : public Operator {
     int numOutputs() override { return 1; }
 
     int getAxis() const { return axis; }
+
+    void getOptypeAttr(
+        std::string &optype, std::map<std::string, std::string> &attr,
+        std::map<std::string, std::vector<int>> &extra) const override;
 
   private:
     int axis;
@@ -1518,6 +1606,10 @@ class ActivationOp : public Operator {
     int numOutputs() override { return 1; }
 
     ActType getActType() const { return actType; }
+
+    void getOptypeAttr(
+        std::string &optype, std::map<std::string, std::string> &attr,
+        std::map<std::string, std::vector<int>> &extra) const override;
 
   private:
     ActType actType;

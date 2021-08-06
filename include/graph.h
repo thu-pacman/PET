@@ -30,6 +30,8 @@ class GraphBase {
 
     void updateConnection();
     void removeOps(OpVec &ops);
+
+    bool exportOnnx(const char *path);
 };
 
 class Graph : public GraphBase {
