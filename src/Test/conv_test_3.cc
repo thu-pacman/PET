@@ -33,6 +33,7 @@ int main() {
 
     conv1->compute();
     std::cout << "o1 compute finish" << std::endl;
+    
     o2->itInit();
     while (o2->itValid()) {
         auto it = o2->itGet();
@@ -48,7 +49,7 @@ int main() {
     int total = 0, equal = 0;
     for (size_t i = 0; i < o1->size(); ++i) {
         total++;
-        if (o1d[i] == o2d[i])
+        if (int(o1d[i]) == int(o2d[i]))
             equal++;
     }
     std::cout << "equal/total = " << equal << "/" << total << " = "

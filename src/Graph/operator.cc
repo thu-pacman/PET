@@ -90,6 +90,7 @@ void ConvOp::initHash() {
     hash = hashPack(hash);
 }
 
+// 在 CPU 上进行计算 
 Tensor *ConvOp::compute() {
     if (outputs[0]->isComputed())
         return outputs[0];
@@ -151,6 +152,216 @@ Tensor *ConvOp::compute() {
                 }
         }
     }
+
+    // for (size_t i = 0; i < output->size(); i++) {
+    //     std::cout << *(output->getDataPtr() + i) << " ";
+    //     if (i != 0 && i % 20 == 0) {
+    //         std::cout << std::endl;
+    //     }
+    // }
+    // std::cout << std::endl;
+
+    output->setComputed();
+    return output;
+}
+
+// 在 GPU 上进行计算
+Tensor *ConvOp::compute() {
+    if (outputs[0]->isComputed()) {
+        return outputs[0];
+    }
+
+    // handle
+    cudnnHandle_t handle;
+    cudnnCreate(&handle);
+
+    // input
+    auto input = inputs[0];
+    auto n = input->getDims()[0];
+    auto c = input->getDims()[1];
+    auto h = input->getDims()[2];
+    auto w = input->getDims()[3];
+
+    cudnnTensorDescriptor_t inDesc;
+    checkCudnnError(cudnnCreateTensorDescriptor(&inDesc));
+    checkCudnnError(cudnnSetTensor4dDescriptor(
+        inDesc, CUDNN_TENSOR_NCHW, DATATYPE, n, c, h, w));
+
+    int *inData;
+    checkCudaError(cudaMalloc(&inData, input->size() * sizeof(int)));
+    checkCudaError(cudaMemcpy(inData, input->getDataPtr(), input->size() * sizeof(int), cudaMemcpyHostToDevice));
+
+    std::cout << "input: {" << n << ", " << c << ", " << h << ", " << w << "}"<< std::endl;
+
+    // std::cout << "==========input==========" << std::endl;
+    // for (size_t i = 0; i < input->size(); i++) {
+    //     if (i != 0 && i % 10 == 0) {
+    //         std::cout << std::endl;
+    //     }
+    //     std::cout << *(input->getDataPtr() + i) << " ";
+    // }
+    // std::cout << std::endl;
+
+    // float *tmpInput = new float[input->size()];
+    // checkCudaError(cudaMemcpy(tmpInput, inData, input->size() * sizeof(int), cudaMemcpyDeviceToHost));
+    // std::cout << "==========inData==========" << std::endl;
+    // for (size_t i = 0; i < input->size(); i++) {
+    //     if (i != 0 && i % 10 == 0) {
+    //         std::cout << std::endl;
+    //     }
+    //     std::cout << *(tmpInput + i) << " ";
+    // }
+    // std::cout << std::endl;
+
+    // kernel
+    auto weight = inputs[1];
+    auto f = weight->getDims()[0];
+    auto cpg = weight->getDims()[1];
+    auto r = weight->getDims()[2];
+    auto s = weight->getDims()[3];
+
+    std::cout << "weight: {" << f << ", " << cpg << ", " << r << ", " << s << "}"<< std::endl;
+
+    cudnnFilterDescriptor_t knDesc;
+    checkCudnnError(cudnnCreateFilterDescriptor(&knDesc));
+    // BUG: the second argument can only be CUDNN_DATA_FLOAT ?
+    checkCudnnError(cudnnSetFilter4dDescriptor(
+        knDesc, CUDNN_DATA_INT32, CUDNN_TENSOR_NCHW, f, cpg, r, s));
+
+    int *knData;
+    checkCudaError(cudaMalloc(&knData, weight->size() * sizeof(int)));
+    checkCudaError(cudaMemcpy(knData, weight->getDataPtr(), weight->size() * sizeof(int), cudaMemcpyHostToDevice));
+
+    // std::cout << "==========Weight==========" << std::endl;
+    // for (size_t i = 0; i < weight->size(); i++) {
+    //     if (i != 0 && i % 10 == 0) {
+    //         std::cout << std::endl;
+    //     }
+    //     std::cout << *(weight->getDataPtr() + i) << " ";
+    // }
+    // std::cout << std::endl;
+
+    // int *tmpWeight = new int[weight->size()];
+    // checkCudaError(cudaMemcpy(tmpWeight, knData, weight->size() * sizeof(int), cudaMemcpyDeviceToHost));
+    // std::cout << "==========knData==========" << std::endl;
+    // for (size_t i = 0; i < weight->size(); i++) {
+    //     if (i != 0 && i % 10 == 0) {
+    //         std::cout << std::endl;
+    //     }
+    //     std::cout << *(tmpWeight + i) << " ";
+    // }
+    // std::cout << std::endl;
+
+    // convolution descriptor
+    auto g = c / cpg;
+    if (f % g != 0) {
+        return nullptr;
+    }
+
+    std::cout << "kernel: " << "ph: " << ph << "pw: " << pw 
+                            << "sh: " << sh << "sw: " << sw 
+                            << "dh: " << dh << "dw: " << dw << std::endl;
+
+    cudnnConvolutionDescriptor_t convDesc;
+    checkCudnnError(cudnnCreateConvolutionDescriptor(&convDesc));
+    checkCudnnError(cudnnSetConvolution2dDescriptor(
+        convDesc, ph, pw, sh, sw, dh, dw, CUDNN_CONVOLUTION, DATATYPE));
+    if (g > 1) {
+        checkCudnnError(cudnnSetConvolutionGroupCount(convDesc, g));
+    }
+
+    // output
+    auto output = outputs[0];
+    output->dataMalloc();
+    auto outDim = output->getDims();
+    auto on = outDim[0], oc = outDim[1], oh = outDim[2], ow = outDim[3];
+
+    std::cout << "output: {" << on << ", " << oc << ", " << oh << ", " << ow  << "}"<< std::endl;
+
+    cudnnTensorDescriptor_t outDesc;
+    checkCudnnError(cudnnCreateTensorDescriptor(&outDesc));
+    checkCudnnError(cudnnSetTensor4dDescriptor(
+        outDesc, CUDNN_TENSOR_NCHW, DATATYPE, on, oc, oh, ow));
+
+    int *outData;
+    checkCudaError(cudaMalloc(&outData, output->size() * sizeof(int)));
+
+    // algorithm
+    // cudnnConvolutionFwdAlgo_t algo = CUDNN_CONVOLUTION_FWD_ALGO_DIRECT;
+    constexpr int N_ALGO = 8;
+    constexpr cudnnConvolutionFwdAlgo_t ALGOS[N_ALGO] = {
+        CUDNN_CONVOLUTION_FWD_ALGO_IMPLICIT_GEMM,
+        CUDNN_CONVOLUTION_FWD_ALGO_IMPLICIT_PRECOMP_GEMM,
+        CUDNN_CONVOLUTION_FWD_ALGO_GEMM,
+        CUDNN_CONVOLUTION_FWD_ALGO_DIRECT,
+        CUDNN_CONVOLUTION_FWD_ALGO_FFT,
+        CUDNN_CONVOLUTION_FWD_ALGO_FFT_TILING,
+        CUDNN_CONVOLUTION_FWD_ALGO_WINOGRAD,
+        CUDNN_CONVOLUTION_FWD_ALGO_WINOGRAD_NONFUSED};
+
+    // TODO: activation descriptor && bias descriptor
+
+    // for (int i = 0; i < N_ALGO; i++) {
+        std::cout << ALGOS[0] << " Begin!" << std::endl; 
+
+        // workspace size
+        size_t wsSize;
+        auto stat = cudnnGetConvolutionForwardWorkspaceSize(
+            handle, inDesc, knDesc, convDesc, outDesc, ALGOS[0], 
+            &wsSize);
+
+        if (stat != CUDNN_STATUS_SUCCESS) {
+            std::cout << "stat: " << stat << std::endl;
+            std::cout << "wsSize: " << wsSize << std::endl;
+            std::cout << ALGOS[0] << " Fail!" << std::endl;
+            exit(-1);
+        }
+
+        // allocate memory
+        size_t *wsData = nullptr;
+        checkCudaError(cudaMalloc(&wsData, wsSize));
+
+        // convolution
+        float alpha = 1.f, beta = 0.f;
+        checkCudnnError(cudnnConvolutionForward(handle, 
+                                        &alpha, inDesc, inData, 
+                                        knDesc, knData,
+                                        convDesc, ALGOS[0], 
+                                        wsData, wsSize, 
+                                        &beta, outDesc, outData)); 
+
+        std::cout << ALGOS[0] << " Success!" << std::endl; 
+
+        // float *tmpOutput = new float[output->size()];
+        // checkCudaError(cudaMemcpy(tmpOutput, outData, output->size() * sizeof(float), cudaMemcpyDeviceToHost));
+        // std::cout << "==========outData==========" << std::endl;
+        // for (size_t i = 0; i < output->size(); i++) {
+        //     if (i != 0 && i % 10 == 0) {
+        //         std::cout << std::endl;
+        //     } 
+        //     std::cout << *(tmpOutput + i) << " ";
+        // }
+        // std::cout << std::endl;
+
+        // free memory
+        checkCudaError(cudaFree(wsData));
+    // }
+
+    // copy data
+    checkCudaError(cudaMemcpy(output->getDataPtr(), outData, output->size() * sizeof(int), cudaMemcpyDeviceToHost));
+
+    // destroy
+    checkCudaError(cudaFree(inData));
+    checkCudaError(cudaFree(knData));
+    checkCudaError(cudaFree(outData));
+
+    checkCudnnError(cudnnDestroyTensorDescriptor(inDesc));
+    checkCudnnError(cudnnDestroyTensorDescriptor(outDesc));
+    checkCudnnError(cudnnDestroyFilterDescriptor(knDesc));
+    checkCudnnError(cudnnDestroyConvolutionDescriptor(convDesc));
+
+    checkCudnnError(cudnnDestroy(handle)); 
+
     output->setComputed();
     return output;
 }
@@ -447,7 +658,7 @@ double ConvOp::perf(PerfEngine *pe, int rounds, int warmupRounds) {
         if (durtime < best.time) {
             best = ConvResult{durtime, ALGOS[i], wsSize};
         }
-        // std::cout << "[perf] " << ALGOS[i] << ", " << durtime << std::endl;
+        std::cout << "[perf] " << ALGOS[i] << ", " << durtime << std::endl;
     }
 
     // finalize
