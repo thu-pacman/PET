@@ -21,16 +21,16 @@ int main() {
     int input_len = n * c * h * w;
     VType *_input = new VType[input_len];
     for (int i = 0; i < input_len; ++i)
-        if (!fscanf(in, "%u", &_input[i]))
-            return -1;
+        // if (!fscanf(in, "%u", &_input[i]))
+        //     return -1;
     fclose(in);
 
     FILE *wgt = fopen("dat/conv_test/weight.dat", "r");
     int weight_len = f * c * r * s;
     VType *_weight = new VType[weight_len];
     for (int i = 0; i < weight_len; ++i)
-        if (!fscanf(wgt, "%u", &_weight[i]))
-            return -1;
+        // if (!fscanf(wgt, "%u", &_weight[i]))
+        //     return -1;
     fclose(wgt);
 
     assert(input.dataMalloc());

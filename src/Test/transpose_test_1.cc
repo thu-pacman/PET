@@ -29,7 +29,7 @@ int main() {
     int output_len = outp->size();
     FILE *out = fopen("dat/transpose_test/output_tpm.dat", "w");
     for (int i = 0; i < output_len; ++i) {
-        fprintf(out, "%u ", outp->getData(i));
+        // fprintf(out, "%u ", outp->getData(i));
         if (i % 32 == 31)
             fprintf(out, "\n");
     }
