@@ -29,6 +29,11 @@ PYBIND11_EMBEDDED_MODULE(cpp_module, m) {
                                               int, int, int, int, int,
                                               Tensor *)>(&Graph::conv),
              py::return_value_policy::reference_internal)
+        .def("convTrans",
+             static_cast<Operator *(Graph::*)(Tensor *, Tensor *, Tensor *, int,
+                                              int, int, int, int, int,
+                                              Tensor *)>(&Graph::convTrans),
+             py::return_value_policy::reference_internal)
         .def("pad",
              static_cast<Operator *(Graph::*)(Tensor *, Tensor *, const Dim &,
                                               const Dim &)>(&Graph::pad),
@@ -43,6 +48,14 @@ PYBIND11_EMBEDDED_MODULE(cpp_module, m) {
             static_cast<Operator *(Graph::*)(Tensor *, Tensor *, Tensor *, bool,
                                              bool, Tensor *)>(&Graph::matmul),
             py::return_value_policy::reference_internal)
+        .def("g2bmm",
+             static_cast<Operator *(Graph::*)(Tensor *, Tensor *, Tensor *, int,
+                                              int, Tensor *)>(&Graph::g2bmm),
+             py::return_value_policy::reference_internal)
+        .def("gbmml",
+             static_cast<Operator *(Graph::*)(Tensor *, Tensor *, Tensor *, int,
+                                              Tensor *)>(&Graph::gbmml),
+             py::return_value_policy::reference_internal)
         .def("split",
              static_cast<Operator *(Graph::*)(Tensor *, const TensorVec &, int,
                                               int)>(&Graph::split),
@@ -112,6 +125,10 @@ PYBIND11_EMBEDDED_MODULE(cpp_module, m) {
         .def(
             "relu",
             static_cast<Operator *(Graph::*)(Tensor *, Tensor *)>(&Graph::relu),
+            py::return_value_policy::reference_internal)
+        .def(
+            "tanh",
+            static_cast<Operator *(Graph::*)(Tensor *, Tensor *)>(&Graph::tanh),
             py::return_value_policy::reference_internal)
         .def("batchnorm",
              static_cast<Operator *(Graph::*)(Tensor *, Tensor *, Tensor *,
@@ -206,6 +223,50 @@ Operator *Graph::conv(Tensor *input, Tensor *weight, ConvOp::PaddingMode pm,
     return op;
 }
 
+Operator *Graph::convTrans(Tensor *input, Tensor *weight, Tensor *output,
+                           int ph, int pw, int sh, int sw, int dh, int dw,
+                           Tensor *bias) {
+    {
+        auto dims = input->getDims();
+        input->setDims({dims[0], dims[2], dims[3], dims[1]});
+    }
+    {
+        auto dims = weight->getDims();
+        weight->setDims({dims[0], dims[2], dims[3], dims[1]});
+    }
+    auto op =
+        new ConvTransOp(input, weight, output, ph, pw, sh, sw, dh, dw, bias);
+    ops.emplace_back(op);
+    return op;
+}
+
+Operator *Graph::convTrans(Tensor *input, Tensor *weight, int ph, int pw,
+                           int sh, int sw, int dh, int dw, Tensor *bias) {
+    auto op = new ConvTransOp(input, weight, ph, pw, sh, sw, dh, dw, bias);
+    ops.emplace_back(op);
+    auto output = op->getOutputs()[0];
+    addTensor(output);
+    return op;
+}
+
+Operator *Graph::convTrans(Tensor *input, Tensor *weight, Tensor *output,
+                           ConvTransOp::PaddingMode pm, int sh, int sw, int dh,
+                           int dw, Tensor *bias) {
+    auto op = new ConvTransOp(input, weight, output, pm, sh, sw, dh, dw, bias);
+    ops.emplace_back(op);
+    return op;
+}
+
+Operator *Graph::convTrans(Tensor *input, Tensor *weight,
+                           ConvTransOp::PaddingMode pm, int sh, int sw, int dh,
+                           int dw, Tensor *bias) {
+    auto op = new ConvTransOp(input, weight, pm, sh, sw, dh, dw, bias);
+    ops.emplace_back(op);
+    auto output = op->getOutputs()[0];
+    addTensor(output);
+    return op;
+}
+
 Operator *Graph::matmul(Tensor *A, Tensor *B, Tensor *C, bool transA,
                         bool transB, Tensor *bias) {
     auto op = new MatmulOp(A, B, C, transA, transB, bias);
@@ -216,6 +277,37 @@ Operator *Graph::matmul(Tensor *A, Tensor *B, Tensor *C, bool transA,
 Operator *Graph::matmul(Tensor *A, Tensor *B, bool transA, bool transB,
                         Tensor *bias) {
     auto op = new MatmulOp(A, B, transA, transB, bias);
+    ops.emplace_back(op);
+    auto output = op->getOutputs()[0];
+    addTensor(output);
+    return op;
+}
+
+Operator *Graph::g2bmm(Tensor *A, Tensor *B, Tensor *C, int width, int dilation,
+                       Tensor *bias) {
+    auto op = new G2BMMOp(A, B, C, width, dilation, bias);
+    ops.emplace_back(op);
+    return op;
+}
+
+Operator *Graph::g2bmm(Tensor *A, Tensor *B, int width, int dilation,
+                       Tensor *bias) {
+    auto op = new G2BMMOp(A, B, width, dilation, bias);
+    ops.emplace_back(op);
+    auto output = op->getOutputs()[0];
+    addTensor(output);
+    return op;
+}
+
+Operator *Graph::gbmml(Tensor *A, Tensor *B, Tensor *C, int dilation,
+                       Tensor *bias) {
+    auto op = new GBMMLOp(A, B, C, dilation, bias);
+    ops.emplace_back(op);
+    return op;
+}
+
+Operator *Graph::gbmml(Tensor *A, Tensor *B, int dilation, Tensor *bias) {
+    auto op = new GBMMLOp(A, B, dilation, bias, Operator::ActType::None);
     ops.emplace_back(op);
     auto output = op->getOutputs()[0];
     addTensor(output);
@@ -562,6 +654,27 @@ Operator *Graph::softmax(Tensor *input, int axis) {
     return op;
 }
 
+Operator *Graph::tanh(Tensor *input, Tensor *output) {
+    auto op = new TanhOp(input, output);
+    ops.emplace_back(op);
+    return op;
+}
+
+Operator *Graph::tanh(Tensor *input) {
+    auto op = new TanhOp(input);
+    ops.emplace_back(op);
+    auto output = op->getOutputs()[0];
+    addTensor(output);
+    return op;
+}
+
+Operator *Graph::membound(TensorVec &inputs, TensorVec &outputs,
+                          nnet::Expr expr, double exec_time) {
+    auto op = new MemBoundOp(inputs, outputs, expr, exec_time);
+    ops.emplace_back(op);
+    return op;
+}
+
 Tensor *GraphBase::tensor(const Dim &dims, Tensor::DataType dtype) {
     auto tensor = new Tensor(dims, Tensor::Input, dtype);
     tensors.emplace_back(tensor);
@@ -597,9 +710,8 @@ bool Graph::importOnnx(const char *net) {
         }
         throw;
     }
-    if (mutateInceptionHead()) {
+    if (mutateInceptionHead())
         puts("Detecting inception head");
-    }
 
     updateConnection();
     return true;
@@ -852,13 +964,14 @@ int SubGraph::print() {
     for (auto op : getOperators()) {
         std::cout << "        ";
         op->print();
+        std::cout << "[" << op->getGuid() << "]";
         std::cout << " pre=[";
         for (auto pre : op->getPredecessors()) {
-            std::cout << pre->getHash() << ",";
+            std::cout << pre->getGuid() << ",";
         }
         std::cout << "], suc=[";
         for (auto suc : op->getSuccessors()) {
-            std::cout << suc->getHash() << ",";
+            std::cout << suc->getGuid() << ",";
         }
         std::cout << "]" << std::endl;
     }
@@ -1078,6 +1191,171 @@ void GraphBase::removeOps(OpVec &removed_ops) {
             new_tensors.push_back(t);
     }
     tensors = new_tensors;
+}
+
+bool GraphBase::exportOnnx(const char *path) {
+    std::vector<std::string> tensor_name;
+    std::map<std::string, std::string> tensor_dtype;
+    std::map<std::string, std::vector<int>> tensor_dim;
+    std::vector<std::string> initializer;
+    std::vector<std::string> op_name;
+    std::map<std::string, std::vector<std::string>> op_input, op_output;
+    std::map<std::string, std::map<std::string, std::string>> op_attr;
+    std::map<std::string, std::vector<int>> tensor_value;
+
+    auto &tensors = getTensors();
+    for (auto &tensor : tensors) {
+        size_t guid = tensor->getGuid();
+        Tensor::DataType dtype = tensor->getDType();
+        Dim dim = tensor->getDims();
+        Tensor::TensorType ttype = tensor->getType();
+
+        std::string name = "tensor_" + std::to_string(guid);
+        std::string dtype_str = "";
+        if (dtype == Tensor::DataType::Float32) {
+            dtype_str = "Float32";
+        } else {
+            dtype_str = "Int32";
+        }
+        tensor_name.emplace_back(name);
+        tensor_dtype[name] = dtype_str;
+        tensor_dim[name] = dim;
+
+        if (ttype == Tensor::TensorType::Weight) {
+            initializer.emplace_back(name);
+        } else {
+            if (ttype == Tensor::TensorType::Invalid) {
+                std::cout << "Invalid tensor founded!" << std::endl;
+            }
+            if (ttype == Tensor::TensorType::NotCounted) {
+                std::cout << "Notcounted tensor founded!" << std::endl;
+            }
+        }
+    }
+
+    std::cout << "Tensors Got." << std::endl;
+
+    auto &operators = getOperators();
+    for (auto &op : operators) {
+
+        if (op->isReshapeOp()) {
+            auto outp = op->getOutputs()[0];
+            std::vector<int> extra;
+            for (size_t i = 0, iEnd = (outp->getDims()).size(); i < iEnd; ++i) {
+                extra.emplace_back((outp->getDims())[i]);
+            }
+            std::string opname = "Reshape_" + std::to_string(op->getGuid()) + "_shape";
+            tensor_value[opname] = extra;
+        }
+
+        if (op->isTransposeOp()) {
+            Tensor *inp = op->getInputs()[0];
+            Tensor *oup = op->getOutputs()[0];
+            std::string last = "tensor_" + std::to_string(inp->getGuid());
+            Dim last_dim = inp->getDims();
+
+            TransposeOp *trop = dynamic_cast<TransposeOp *>(op);
+            const std::vector<std::shared_ptr<TransBasic>> &totop =
+                trop->getTTParam();
+            for (size_t i = 0, iEnd = totop.size(); i < iEnd; ++i) {
+                std::string outp = "";
+                if (i == iEnd - 1) {
+                    outp = "tensor_" + std::to_string(oup->getGuid());
+                } else {
+                    outp = "tensor_tr_" + std::to_string(op->getGuid()) + "_" +
+                        std::to_string(i);
+                    tensor_name.emplace_back(outp);
+                    tensor_dtype[outp] = tensor_dtype[last];
+                }
+                std::string optype = "";
+                std::vector<int> extra;
+                totop[i]->getOptypeDim(optype, last_dim, extra);
+
+                if (i < iEnd - 1)
+                    tensor_dim[outp] = last_dim;
+                std::string opname = optype + "_tr_" +
+                                    std::to_string(op->getGuid()) + "_" +
+                                    std::to_string(i);
+                op_name.emplace_back(opname);
+                op_input[opname] = {last};
+                op_output[opname] = {outp};
+                last = outp;
+
+                if (optype == "Reshape") {
+                    tensor_value[opname + "_shape"] = extra;
+                    std::map<std::string, std::string> attr;
+                    op_attr[opname] = attr;
+                }
+                if (optype == "Transpose") {
+                    std::map<std::string, std::string> attr;
+                    std::string perm = "";
+                    for (auto x : extra)
+                        perm += std::to_string(x) + ",";
+                    perm.pop_back();
+                    attr["perm"] = "[" + perm + "]";
+                    op_attr[opname] = attr;
+                }
+            }
+            continue;
+        }
+
+        size_t guid = op->getGuid();
+        std::vector<std::string> inp, oup;
+
+        auto &inputtensors = op->getInputs();
+        for (auto &tensor : inputtensors) {
+            size_t guid = tensor->getGuid();
+            std::string name = "tensor_" + std::to_string(guid);
+            inp.emplace_back(name);
+        }
+
+        auto &outputtensors = op->getOutputs();
+        for (auto &tensor : outputtensors) {
+            size_t guid = tensor->getGuid();
+            std::string name = "tensor_" + std::to_string(guid);
+            oup.emplace_back(name);
+        }
+
+        std::string optype;
+        std::map<std::string, std::string> attr;
+        std::map<std::string, std::vector<int>> extra;
+        op->getOptypeAttr(optype, attr, extra);
+
+        for (auto it = extra.begin(); it != extra.end(); ++it) {
+            std::string name = it->first;
+            tensor_name.emplace_back(name);
+            tensor_dtype[name] = "Float32";
+            tensor_dim[name] = it->second;
+            initializer.emplace_back(name);
+            inp.emplace_back(name);
+        }
+
+        std::string opname = optype + "_" + std::to_string(guid);
+        op_name.emplace_back(opname);
+        op_input[opname] = inp;
+        op_output[opname] = oup;
+        op_attr[opname] = attr;
+    }
+
+    std::cout << "Operators Got." << std::endl;
+
+    start_interpreter();
+    try {
+        py::module::import("cpp_plugin")
+            .attr("export_onnx")(path, tensor_name, tensor_dtype, tensor_dim,
+                                initializer, op_name, op_input, op_output,
+                                op_attr, tensor_value);
+    } catch (py::error_already_set &e) {
+        if (e.matches(PyExc_ImportError)) {
+            std::cerr << "Import Error. Don't forget to set environment "
+                        "variable PYTHONPATH to contain "
+                        "<repo-root>/python" 
+                      << std::endl;
+        }
+        throw;
+    }
+
+    return true;
 }
 
 } // namespace tpm

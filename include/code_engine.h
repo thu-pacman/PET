@@ -59,6 +59,10 @@ class CodeEngine {
     void genExtendDesc(const ExtendOp &op);
     void genReshapeDesc(const ReshapeOp &op);
     void genSoftmaxDesc(const SoftmaxOp &op);
+    void genMemBoundDesc(const MemBoundOp &op);
+    void genConvTransDesc(const ConvTransOp &op);
+    void genG2BMMDesc(const G2BMMOp &op);
+    void genGBMMLDesc(const GBMMLOp &op);
 
     // Compute generator
     void genConvCompute(const ConvOp &op);
@@ -76,6 +80,10 @@ class CodeEngine {
     void genExtendCompute(const ExtendOp &op);
     void genReshapeCompute(const ReshapeOp &op);
     void genSoftmaxCompute(const SoftmaxOp &op);
+    void genMemBoundCompute(const MemBoundOp &op);
+    void genConvTransCompute(const ConvTransOp &op);
+    void genG2BMMCompute(const G2BMMOp &op);
+    void genGBMMLCompute(const GBMMLOp &op);
 
     // Code tools
     int clear();
@@ -91,6 +99,13 @@ class CodeEngine {
                const std::string &funcName,
                const std::vector<std::string> &inputNames,
                const std::string &outputName);
+    std::pair<std::string, std::string>
+    getAnsorCode(const std::vector<std::vector<int>> &inDims,
+                 const std::vector<std::string> &inDTypes,
+                 const std::vector<int> &outDims, const std::string &outDType,
+                 const std::string &lambda, const std::string &funcName,
+                 const std::vector<std::string> &inputNames,
+                 const std::string &outputName);
 
     // File
     inline bool check_existed(const std::string &name);

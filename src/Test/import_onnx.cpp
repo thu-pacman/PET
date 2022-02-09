@@ -15,16 +15,20 @@ int main(int argc, char **argv) {
 
     std::shared_ptr<tpm::SubGraph> graph, bestGraph;
     graph = std::make_shared<tpm::SubGraph>(g->getOperators());
-    tpm::SearchEngine searchEngine;
+    tpm::SearchEngine<tpm::Generator> searchEngine;
     searchEngine.run(graph, bestGraph);
-    // tpm::CodeEngine codeEngine;
-    // auto perfEngine = searchEngine.exportPerfEngine();
-    // codeEngine.importPerfEngine(perfEngine);
-    // codeEngine.genCode(bestGraph, "res.cu");
 
-    // perfEngine->setPenalty(0);
-    // codeEngine.importPerfEngine(perfEngine);
-    // codeEngine.genCode(graph, "origin.cu");
+    std::cout << "Search Finished" << std::endl;
 
+    tpm::CodeEngine codeEngine;
+    auto perfEngine = searchEngine.exportPerfEngine();
+    codeEngine.importPerfEngine(perfEngine);
+    codeEngine.genCode(bestGraph, "res.cu");
+    perfEngine->setPenalty(0);
+    codeEngine.importPerfEngine(perfEngine);
+    codeEngine.genCode(graph, "origin.cu");
+
+    //bestGraph->exportOnnx("pet-optimization.onnx");
+    
     return 0;
 }

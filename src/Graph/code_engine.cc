@@ -1,5 +1,6 @@
 #include "code_engine.h"
 #include "ffi.h"
+#include "nnet/visitor.h"
 #include "perf_engine.h"
 #include "transpose.h"
 #include <fstream>
@@ -47,7 +48,8 @@ std::pair<std::string, std::string> CodeEngine::genTranspose(
         invoke_code += "{\n";
         invoke_code += "    dim3 gridSize(80, 1);\n";
         invoke_code += "    dim3 blockSize(32 * 4, 1);\n";
-        invoke_code += "    kernel_transpose_3d<<<gridSize, blockSize>>>(" + inputName + ", ";
+        invoke_code += "    kernel_transpose_3d<<<gridSize, blockSize>>>(" +
+                       inputName + ", ";
         invoke_code += outputName + ", ";
         invoke_code += std::to_string(dimA[0]) + ", ";
         invoke_code += std::to_string(dimA[1]) + ", ";
@@ -63,7 +65,8 @@ std::pair<std::string, std::string> CodeEngine::genTranspose(
         invoke_code += "{\n";
         invoke_code += "    dim3 gridSize(80, 1);\n";
         invoke_code += "    dim3 blockSize(32 * 4, 1);\n";
-        invoke_code += "    kernel_transpose_3d<<<gridSize, blockSize>>>(" + inputName + ", ";
+        invoke_code += "    kernel_transpose_3d<<<gridSize, blockSize>>>(" +
+                       inputName + ", ";
         invoke_code += outputName + ", ";
         invoke_code += std::to_string(dimA[0]) + ", ";
         invoke_code += std::to_string(dimA[1] * dimA[2]) + ", ";
@@ -297,6 +300,7 @@ void CodeEngine::genHeader() {
     head += "#include <cstdio>\n";
     head += "#include <iostream>\n";
     head += "#include <cub/cub.cuh>\n";
+    head += "#include <custom_ops.cuh>\n";
     head += "\n";
     head +=
         "inline const char *cublasGetErrorString(cublasStatus_t error) { \\\n";
@@ -417,7 +421,8 @@ void CodeEngine::genHeader() {
     head += "    MD bigger_m = a_bigger ? a : b;\n";
     head += "    MD smaller_m = a_bigger ? b : a;\n";
     head += "    MD res;\n";
-    head += "    res.d = bigger_m.d + smaller_m.d * __expf(smaller_m.m - bigger_m.m);\n";
+    head += "    res.d = bigger_m.d + smaller_m.d * __expf(smaller_m.m - "
+            "bigger_m.m);\n";
     head += "    res.m = bigger_m.m;\n";
     head += "    return res;\n";
     head += "}\n";
@@ -444,7 +449,8 @@ void CodeEngine::genHeader() {
     head += "    MD md_partial;\n";
     head += "    md_partial.m = -FLT_MAX;\n";
     head += "    md_partial.d = 0.0F;\n";
-    head += "    for(int elem_id = thread_id; elem_id < V; elem_id += THREADBLOCK_SIZE)\n";
+    head += "    for(int elem_id = thread_id; elem_id < V; elem_id += "
+            "THREADBLOCK_SIZE)\n";
     head += "    {\n";
     head += "        MD new_elem;\n";
     head += "        new_elem.m = x[elem_id];\n";
@@ -452,14 +458,17 @@ void CodeEngine::genHeader() {
     head += "        md_partial = reduce_md_op(md_partial, new_elem);\n";
     head += "    }\n";
     head += "\n";
-    head += "    MD md = BlockReduce(temp_storage).Reduce(md_partial, reduce_md_op);\n";
+    head += "    MD md = BlockReduce(temp_storage).Reduce(md_partial, "
+            "reduce_md_op);\n";
     head += "    if (thread_id == 0)\n";
     head += "        md_total = md;\n";
     head += "    __syncthreads();\n";
     head += "\n";
     head += "    float d_total_inverse = __fdividef(1.0F, md_total.d);\n";
-    head += "    for(int elem_id = thread_id; elem_id < V; elem_id += THREADBLOCK_SIZE)\n";
-    head += "        y[elem_id] = __expf(x[elem_id] - md_total.m) * d_total_inverse;\n";
+    head += "    for(int elem_id = thread_id; elem_id < V; elem_id += "
+            "THREADBLOCK_SIZE)\n";
+    head += "        y[elem_id] = __expf(x[elem_id] - md_total.m) * "
+            "d_total_inverse;\n";
     head += "}\n";
     head += "/* online_softmax: cub is required */\n\n";
     head += "#define cudaCheckError() __cudaCheckError(__FILE__, __LINE__)\n";
@@ -467,13 +476,15 @@ void CodeEngine::genHeader() {
     head += "    cudaError err = cudaGetLastError();\n";
     head += "    if (cudaSuccess != err) {\n";
     head += "        std::cout << \"[ERROR] \" << file << \"::\" << line\n";
-    head += "                  << \": cudaCheckError() failed. \" << cudaGetErrorString(err)\n";
+    head += "                  << \": cudaCheckError() failed. \" << "
+            "cudaGetErrorString(err)\n";
     head += "                  << std::endl;\n";
     head += "        exit(-1);\n";
     head += "    }\n";
     head += "    return;\n";
     head += "}\n\n";
-    head += "__global__ void kernel_transpose_3d(float *dst, float *src, const int b, const int m, const int n) {\n";
+    head += "__global__ void kernel_transpose_3d(float *dst, float *src, const "
+            "int b, const int m, const int n) {\n";
     head += "    float buf[32];\n";
     head += "    int warp_id = threadIdx.x / 32;\n";
     head += "    int lane_id = threadIdx.x % 32;\n";
@@ -679,6 +690,21 @@ void CodeEngine::genDesc(const Operator &op) {
     case Operator::Softmax:
         genSoftmaxDesc(static_cast<const SoftmaxOp &>(op));
         break;
+    case Operator::MemBound:
+        genMemBoundDesc(static_cast<const MemBoundOp &>(op));
+        break;
+    case Operator::ConvTrans:
+        genConvTransDesc(static_cast<const ConvTransOp &>(op));
+        break;
+    case Operator::G2BMM:
+        genG2BMMDesc(static_cast<const G2BMMOp &>(op));
+        break;
+    case Operator::GBMML:
+        genGBMMLDesc(static_cast<const GBMMLOp &>(op));
+        break;
+    case Operator::BatchNorm:
+        // FIXME: HACK
+        break;
     default:
         op.print();
         assert(false);
@@ -734,6 +760,21 @@ void CodeEngine::genCompute(const Operator &op) {
     case Operator::Softmax:
         genSoftmaxCompute(static_cast<const SoftmaxOp &>(op));
         break;
+    case Operator::MemBound:
+        genMemBoundCompute(static_cast<const MemBoundOp &>(op));
+        break;
+    case Operator::ConvTrans:
+        genConvTransCompute(static_cast<const ConvTransOp &>(op));
+        break;
+    case Operator::G2BMM:
+        genG2BMMCompute(static_cast<const G2BMMOp &>(op));
+        break;
+    case Operator::GBMML:
+        genGBMMLCompute(static_cast<const GBMMLOp &>(op));
+        break;
+    case Operator::BatchNorm:
+        // FIXME: HACK
+        break;
     default:
         op.print();
         assert(false);
@@ -741,6 +782,42 @@ void CodeEngine::genCompute(const Operator &op) {
 }
 
 void CodeEngine::genConvDesc(const ConvOp &op) {
+    emit("cudnnConvolutionDescriptor_t " + getDescName(op) + ";");
+    emit("checkCudnnError(cudnnCreateConvolutionDescriptor(&" +
+         getDescName(op) + "));");
+    std::string line = "";
+    line += "checkCudnnError(cudnnSetConvolution2dDescriptor(";
+    line += getDescName(op) + ", ";
+    line += std::to_string(op.getPh()) + ", ";
+    line += std::to_string(op.getPw()) + ", ";
+    line += std::to_string(op.getSh()) + ", ";
+    line += std::to_string(op.getSw()) + ", ";
+    line += std::to_string(op.getDh()) + ", ";
+    line += std::to_string(op.getDw()) + ", ";
+    line += "CUDNN_CONVOLUTION, CUDNN_DATA_FLOAT));";
+    emit(line);
+    int arg_g = getDim(*op.getInputs()[0])[1] / getDim(*op.getInputs()[1])[1];
+    if (arg_g > 1) {
+        emit("checkCudnnError(cudnnSetConvolutionGroupCount(" +
+             getDescName(op) + ", " + std::to_string(arg_g) + "));");
+    }
+
+    if (op.getAct() != Operator::None) {
+        emit("cudnnActivationDescriptor_t " + getDescName(op) + "_act ;");
+        emit("checkCudnnError(cudnnCreateActivationDescriptor(&" +
+             getDescName(op) + "_act));");
+        std::string line = "";
+        line += "checkCudnnError(cudnnSetActivationDescriptor(";
+        line += getDescName(op) + "_act, ";
+        line += actToStr(op.getAct()) + ", ";
+        line += "CUDNN_NOT_PROPAGATE_NAN, 0));";
+        // NOT_PROPAGATE_NAN is requierd by
+        // cudnnConvolotionBiasActivationForward
+        emit(line);
+    }
+}
+
+void CodeEngine::genConvTransDesc(const ConvTransOp &op) {
     emit("cudnnConvolutionDescriptor_t " + getDescName(op) + ";");
     emit("checkCudnnError(cudnnCreateConvolutionDescriptor(&" +
          getDescName(op) + "));");
@@ -870,6 +947,116 @@ void CodeEngine::genConvCompute(const ConvOp &op) {
         line += getVarName(*op.getInputs()[1]) + ", ";
         line += getDescName(op) + ", ";
         line += "(cudnnConvolutionFwdAlgo_t)" + std::to_string(algo) + ", ";
+        line += "wsData, ";
+        line += "wsSize, ";
+        line += "&" + beta + ", ";
+        line += getTensorDescName(*op.getOutputs()[0]) + ", ";
+        line += getVarName(*op.getOutputs()[0]) + ", ";
+        line += getTensorDescName(*op.getBias()) + ", ";
+        line += getVarName(*op.getBias()) + ", ";
+        line += getDescName(op) + "_act, ";
+        line += getTensorDescName(*op.getOutputs()[0]) + ", ";
+        line += getVarName(*op.getOutputs()[0]) + "));";
+        emit(line);
+    } else {
+        assert(false);
+    }
+}
+
+void CodeEngine::genConvTransCompute(const ConvTransOp &op) {
+    std::string alpha = "alpha_" + std::to_string(op.getGuid());
+    std::string beta = "beta_" + std::to_string(op.getGuid());
+    emit("float " + alpha + " = 1.0f, " + beta + " = 0.0f;");
+
+    assert(perfEngine->getOpPerf(Operator::ConvTrans,
+                                 op.getArgs(perfEngine->withPenalty())) <
+           INFINITY);
+    int algo = (int)perfEngine->getConvTransAlgo(
+        op.getArgs(perfEngine->withPenalty()));
+    if (op.getAct() == Operator::None && op.getBias() == nullptr) {
+        std::string line = "";
+        line += "checkCudnnError(cudnnConvolutionBackwardData(cudnn, ";
+        line += "&" + alpha + ", ";
+        line += getTensorDescName(*op.getInputs()[0]) + ", ";
+        line += getVarName(*op.getInputs()[0]) + ", ";
+        line += getFilterDescName(*op.getInputs()[1]) + ", ";
+        line += getVarName(*op.getInputs()[1]) + ", ";
+        line += getDescName(op) + ", ";
+        line += "(cudnnConvolutionBwdDataAlgo_t)" + std::to_string(algo) + ", ";
+        line += "wsData, ";
+        line += "wsSize, ";
+        line += "&" + beta + ", ";
+        line += getTensorDescName(*op.getOutputs()[0]) + ", ";
+        line += getVarName(*op.getOutputs()[0]) + "));";
+        emit(line);
+    } else if (op.getAct() == Operator::None && op.getBias() != nullptr) {
+        // Only the CUDNN_CONVOLUTION_FWD_ALGO_IMPLICIT_PRECOMP_GEMM algo is
+        // enabled with CUDNN_ACTIVATION_IDENTITY.
+        // So, fallback to 2 seperated calls
+        std::string line = "";
+        line += "checkCudnnError(cudnnConvolutionBackwardData(cudnn, ";
+        line += "&" + alpha + ", ";
+        line += getTensorDescName(*op.getInputs()[0]) + ", ";
+        line += getVarName(*op.getInputs()[0]) + ", ";
+        line += getFilterDescName(*op.getInputs()[1]) + ", ";
+        line += getVarName(*op.getInputs()[1]) + ", ";
+        line += getDescName(op) + ", ";
+        line += "(cudnnConvolutionBwdDataAlgo_t)" + std::to_string(algo) + ", ";
+        line += "wsData, ";
+        line += "wsSize, ";
+        line += "&" + beta + ", ";
+        line += getTensorDescName(*op.getOutputs()[0]) + ", ";
+        line += getVarName(*op.getOutputs()[0]) + "));";
+        emit(line);
+        emit(beta + " = 1.0f;");
+        line = "";
+        line += "checkCudnnError(cudnnAddTensor(cudnn, ";
+        line += "&" + alpha + ", ";
+        line += getTensorDescName(*op.getBias()) + ", ";
+        line += getVarName(*op.getBias()) + ", ";
+        line += "&" + beta + ", ";
+        line += getTensorDescName(*op.getOutputs()[0]) + ", ";
+        line += getVarName(*op.getOutputs()[0]) + "));";
+        emit(line);
+
+    } else if (op.getAct() != Operator::None && op.getBias() == nullptr) {
+        std::string line = "";
+        line += "checkCudnnError(cudnnConvolutionBackwardData(cudnn, ";
+        line += "&" + alpha + ", ";
+        line += getTensorDescName(*op.getInputs()[0]) + ", ";
+        line += getVarName(*op.getInputs()[0]) + ", ";
+        line += getFilterDescName(*op.getInputs()[1]) + ", ";
+        line += getVarName(*op.getInputs()[1]) + ", ";
+        line += getDescName(op) + ", ";
+        line += "(cudnnConvolutionBwdDataAlgo_t)" + std::to_string(algo) + ", ";
+        line += "wsData, ";
+        line += "wsSize, ";
+        line += "&" + beta + ", ";
+        line += getTensorDescName(*op.getOutputs()[0]) + ", ";
+        line += getVarName(*op.getOutputs()[0]) + "));";
+        emit(line);
+        emit(beta + " = 1.0f;");
+        line = "";
+        line += "checkCudnnError(cudnnActivationBackward(cudnn, ";
+        line += getDescName(op) + "_act, ";
+        line += "&" + alpha + ", ";
+        line += getTensorDescName(*op.getOutputs()[0]) + ", ";
+        line += getVarName(*op.getOutputs()[0]) + ", ";
+        line += "&" + beta + ", ";
+        line += getTensorDescName(*op.getOutputs()[0]) + ", ";
+        line += getVarName(*op.getOutputs()[0]) + "));";
+        emit(line);
+    } else if (op.getAct() != Operator::None && op.getBias() != nullptr) {
+        assert(((void)("No corresponding cuDNN kernels?"), false));
+        std::string line = "";
+        line += "checkCudnnError(cudnnConvolutionBiasActivationForward(cudnn, ";
+        line += "&" + alpha + ", ";
+        line += getTensorDescName(*op.getInputs()[0]) + ", ";
+        line += getVarName(*op.getInputs()[0]) + ", ";
+        line += getFilterDescName(*op.getInputs()[1]) + ", ";
+        line += getVarName(*op.getInputs()[1]) + ", ";
+        line += getDescName(op) + ", ";
+        line += "(cudnnConvolutionBwdDataAlgo_t)" + std::to_string(algo) + ", ";
         line += "wsData, ";
         line += "wsSize, ";
         line += "&" + beta + ", ";
@@ -1506,25 +1693,30 @@ void CodeEngine::genSoftmaxDesc(const SoftmaxOp &op) {
 }
 
 void CodeEngine::genSoftmaxCompute(const SoftmaxOp &op) {
-    emit("{"); shiftTab(1);
-    std::string x = getVarName(*op.getInputs()[0]); // input
+    emit("{");
+    shiftTab(1);
+    std::string x = getVarName(*op.getInputs()[0]);  // input
     std::string y = getVarName(*op.getOutputs()[0]); // output
     auto _dims = (*op.getInputs()[0]).getDims();
     int batch_size = 1, V;
-    for (size_t i = 0, iEnd = _dims.size(); i < iEnd - 1; ++i) 
+    for (size_t i = 0, iEnd = _dims.size(); i < iEnd - 1; ++i)
         batch_size *= _dims[i];
     V = _dims[_dims.size() - 1];
-    emit("int batch_size = " + std::to_string(batch_size) + ", V = " + std::to_string(V) + ";");
+    emit("int batch_size = " + std::to_string(batch_size) +
+         ", V = " + std::to_string(V) + ";");
     emit("int max_threadblock_size = " + std::to_string(V / 8) + ";");
     emit("if (max_threadblock_size >= 256)");
-    emit("    online_softmax<256><<<batch_size,256>>>(" + x + ", " + y + ", V);");
+    emit("    online_softmax<256><<<batch_size,256>>>(" + x + ", " + y +
+         ", V);");
     emit("else if (max_threadblock_size >= 128)");
-    emit("    online_softmax<128><<<batch_size,128>>>(" + x + ", " + y + ", V);");
+    emit("    online_softmax<128><<<batch_size,128>>>(" + x + ", " + y +
+         ", V);");
     emit("else if (max_threadblock_size >= 64)");
     emit("    online_softmax<64><<<batch_size,64>>>(" + x + ", " + y + ", V);");
     emit("else");
     emit("    online_softmax<32><<<batch_size,32>>>(" + x + ", " + y + ", V);");
-    shiftTab(-1); emit("}");
+    shiftTab(-1);
+    emit("}");
     // This code causes runtime error
     // std::string alpha = "alpha_" + std::to_string(op.getGuid());
     // std::string beta = "beta_" + std::to_string(op.getGuid());
@@ -1541,6 +1733,91 @@ void CodeEngine::genSoftmaxCompute(const SoftmaxOp &op) {
     // emit(line);
 }
 
+void CodeEngine::genMemBoundDesc(const MemBoundOp &op) {
+    // Empty
+}
+
+void CodeEngine::genMemBoundCompute(const MemBoundOp &op) {
+    static bool checkEnvVar = false, tuning = false;
+    // check env flag to enable tuning
+    std::string func = "mem_bound_" + std::to_string(op.getGuid());
+
+    if (op.isComputeWeight()) {
+        emit("\n/* " + func + " codegen is omitted since isComputeWeight */\n");
+        return;
+    }
+    if (!checkEnvVar) {
+        checkEnvVar = true;
+        if (auto flag = getenv("NNET_Tuning_MemBound")) {
+            if (flag[0] == '1')
+                tuning = true;
+        }
+    }
+    if (!tuning) {
+        emit("\n/* " + func +
+             " codegen is omitted since NNET_Tuning_MemBound = 0 */\n");
+        return;
+    }
+
+    nnet::AsTVMVisitor visitor;
+    // visitor.dispatch(op.getExpr());
+    auto &&stmts = visitor.getStmts();
+    auto &&inShapes = visitor.getInputShapes();
+    auto &&outShape = visitor.getOutputShape();
+
+    std::vector<std::string> inputs;
+    for (auto &&in : op.getInputs()) {
+        inputs.emplace_back(getVarName(*in));
+    }
+    std::string output = getVarName(*op.getOutput());
+
+    auto res = getAnsorCode(
+        inShapes, std::vector<std::string>(inShapes.size(), "float32"),
+        outShape, "float32", stmts, func, inputs, output);
+
+    head +=
+        "\n" + res.first + "\n" + "/* " + op.getExpr()->toReadable() + " */\n";
+    main += "\n" + res.second + "\n";
+}
+
+void CodeEngine::genG2BMMDesc(const G2BMMOp &op) {
+    // Empty
+}
+
+void CodeEngine::genG2BMMCompute(const G2BMMOp &op) {
+    auto A = op.getInputs()[0];
+    auto &&dimA = getDim(*A);
+    auto b = dimA[0];
+    auto n = dimA[1];
+    auto m = dimA[2];
+    auto w = op.getWidth();
+    auto d = op.getDilation();
+    emit("tpm::sg2bmm(" + getVarName(*op.getInputs()[0]) + ", " +
+         getVarName(*op.getInputs()[1]) + ", " +
+         getVarName(*op.getOutputs()[0]) + ", " + std::to_string(b) + ", " +
+         std::to_string(n) + ", " + std::to_string(m) + ", " +
+         std::to_string(w) + ", " + std::to_string(d) + ");");
+}
+
+void CodeEngine::genGBMMLDesc(const GBMMLOp &op) {
+    // Empty
+}
+
+void CodeEngine::genGBMMLCompute(const GBMMLOp &op) {
+    auto A = op.getInputs()[0], B = op.getInputs()[1];
+    auto &&dimA = getDim(*A), &&dimB = getDim(*B);
+    auto b = dimA[0];
+    auto n = dimA[1];
+    auto w = (dimA[2] - 1) / 2;
+    auto m = dimB[2];
+    auto d = op.getDilation();
+    emit("tpm::sgbmml(" + getVarName(*op.getInputs()[0]) + ", " +
+         getVarName(*op.getInputs()[1]) + ", " +
+         getVarName(*op.getOutputs()[0]) + ", " + std::to_string(b) + ", " +
+         std::to_string(n) + ", " + std::to_string(m) + ", " +
+         std::to_string(w) + ", " + std::to_string(d) + ");");
+}
+
 std::pair<std::string, std::string> CodeEngine::getTVMCode(
     const std::vector<std::vector<int>> &inDims,
     const std::vector<std::string> &inDTypes, const std::vector<int> &outDims,
@@ -1552,6 +1829,31 @@ std::pair<std::string, std::string> CodeEngine::getTVMCode(
         auto func = py::module::import("cpp_plugin").attr("gen_simple_op");
         py::tuple code = func(inDims, inDTypes, outDims, lambda, funcName,
                               inputNames, outputName);
+        funcCode = py::str(code[0]), invokeCode = py::str(code[1]);
+    } catch (py::error_already_set &e) {
+        if (e.matches(PyExc_ImportError)) {
+            std::cerr << "Import Error. Don't forget to set environment "
+                         "variable PYTHONPATH to contain "
+                         "<repo-root>/python"
+                      << std::endl;
+        }
+        throw;
+    }
+    return std::make_pair(funcCode, invokeCode);
+}
+
+std::pair<std::string, std::string> CodeEngine::getAnsorCode(
+    const std::vector<std::vector<int>> &inDims,
+    const std::vector<std::string> &inDTypes, const std::vector<int> &outDims,
+    const std::string &outDType, const std::string &lambda,
+    const std::string &funcName, const std::vector<std::string> &inputNames,
+    const std::string &outputName) {
+    std::string funcCode, invokeCode;
+    start_interpreter();
+    try {
+        auto func = py::module::import("cpp_plugin").attr("gen_ansor_op");
+        py::tuple code = func(inDims, inDTypes, outDims, outDType, lambda,
+                              funcName, inputNames, outputName);
         funcCode = py::str(code[0]), invokeCode = py::str(code[1]);
     } catch (py::error_already_set &e) {
         if (e.matches(PyExc_ImportError)) {

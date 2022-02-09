@@ -30,9 +30,9 @@ int main() {
     //     op->compute();
 
     std::vector<std::shared_ptr<tpm::Operator>> all_ops;
-    // all_ops.emplace_back(new tpm::ConcatOp(0));
-    // all_ops.emplace_back(new tpm::MatmulOp(false, false));
-    // all_ops.emplace_back(new tpm::SplitOp(0, {1, 1}));
+    all_ops.emplace_back(new tpm::ConcatOp(0));
+    all_ops.emplace_back(new tpm::MatmulOp(false, false));
+    all_ops.emplace_back(new tpm::SplitOp(0, {1, 1}));
     tpm::Generator mutant{};
     std::vector<tpm::SubGraph *> candidates;
     mutant.run(sg, candidates);

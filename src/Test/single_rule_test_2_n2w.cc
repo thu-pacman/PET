@@ -35,7 +35,7 @@ int main() {
     for (auto candidate : candidates)
         candidate->print();
 
-    assert(candidates.size() == 3);
+    assert(candidates.size() == 2);
 
     // auto g1 = new tpm::Graph();
     // auto t0 = g1->tensor({n, c, h, w});

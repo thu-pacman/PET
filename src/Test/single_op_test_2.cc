@@ -18,7 +18,7 @@ int main() {
 
     std::shared_ptr<tpm::SubGraph> graph, bestGraph;
     graph = std::make_shared<tpm::SubGraph>(g->getOperators());
-    tpm::SearchEngine searchEngine;
+    tpm::SearchEngine<tpm::Generator> searchEngine;
     searchEngine.run(graph, bestGraph);
     tpm::CodeEngine codeEngine;
     auto perfEngine = searchEngine.exportPerfEngine();
