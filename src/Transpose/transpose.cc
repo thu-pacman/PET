@@ -27,21 +27,21 @@ tpm::DecisionTree *tpm::TransSplit::putTranspose(tpm::DecisionTree *tree,
     if (copys == 0) {
         sprintf(_newvar, "(%c*%d+%c)", 'a' + index, in_dim + extr, 'a' + index + 1);
         std::string newvar = _newvar;
-        dfsSpilt(tree, newvar);
+        dfsSplit(tree, newvar);
         dimsize.insert(dimsize.begin() + index + 1, in_dim);
         dimsize[index] = (dimsize[index] - 1) / (in_dim + extr) + 1;
     } else {
         assert(dimsize[index] == in_dim * 2);
         sprintf(_newvar, "(%c*%d+%c-%c*%d)", 'a' + index, in_dim, 'a' + index + 1, 'a' + index, copys);
         std::string newvar = _newvar;
-        dfsSpilt(tree, newvar);
+        dfsSplit(tree, newvar);
         dimsize.insert(dimsize.begin() + index + 1, in_dim + copys);
         dimsize[index] = dimsize[index] / in_dim;
     }
     return tree;
 }
 
-void tpm::TransSplit::dfsSpilt(DecisionTree *tree, std::string newvar) {
+void tpm::TransSplit::dfsSplit(DecisionTree *tree, std::string newvar) {
     if (tree == nullptr)
         return;
     std::vector<std::string> mapLambda = tree->getCond();
@@ -58,8 +58,8 @@ void tpm::TransSplit::dfsSpilt(DecisionTree *tree, std::string newvar) {
         exp = newexp;
     }
     tree->putCond(mapLambda);
-    dfsSpilt(tree->getThenNode(), newvar);
-    dfsSpilt(tree->getElseNode(), newvar);
+    dfsSplit(tree->getThenNode(), newvar);
+    dfsSplit(tree->getElseNode(), newvar);
 }
 
 void tpm::TransSplit::print() {
@@ -217,6 +217,53 @@ std::string tpm::TransposeEngine::getLambda(std::vector<TransBasic *> oper,
     lambda += getLambdaExp(tree);
     
     return lambda;
+}
+
+void TransSplit::getOptypeDim(std::string &optype, std::vector<int> &dim,
+                            std::vector<int> &extra) {
+    // TODO: add operator with padding if required
+    optype = "Reshape";
+    std::vector<int> ndim;
+    for (size_t i = 0, iEnd = dim.size(); i < iEnd; ++i) {
+        if ((int)i == index) {
+            ndim.emplace_back(dim[i] / in_dim);
+            ndim.emplace_back(in_dim);
+            extra.emplace_back(-1);
+            extra.emplace_back(in_dim);
+        } else {
+            ndim.emplace_back(dim[i]);
+            extra.emplace_back(dim[i]);
+        }
+    }
+    dim = ndim;
+}
+
+void TransFuse::getOptypeDim(std::string &optype, std::vector<int> &dim,
+                            std::vector<int> &extra) {
+    optype = "Reshape";
+    std::vector<int> ndim;
+    for (size_t i = 0, iEnd = dim.size(); i < iEnd; ++i) {
+        if ((int)i == index) {
+            ndim.emplace_back(dim[i] * dim[i + 1]);
+            extra.emplace_back(dim[i] * dim[i + 1]);
+            i++;
+        } else {
+            ndim.emplace_back(dim[i]);
+            extra.emplace_back(dim[i]);
+        }
+    }
+    dim = ndim;
+}
+
+void TransReorder::getOptypeDim(std::string &optype, std::vector<int> &dim,
+                                std::vector<int> &extra) {
+    optype = "Transpose";
+    std::vector<int> ndim = dim;
+    for (size_t i = 0, iEnd = permu.size(); i < iEnd; ++i) {
+        ndim[i] = dim[permu[i]];
+    }
+    dim = ndim;
+    extra = permu;
 }
 
 } // namespace tpm

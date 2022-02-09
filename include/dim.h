@@ -157,4 +157,3 @@ inline DimRange unionRange(const DimRange &lhs, const DimRange &rhs) {
 } // namespace tpm
 
 #endif // DIM_H
-

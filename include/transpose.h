@@ -29,6 +29,9 @@ class TransBasic {
     virtual DecisionTree *putTranspose(DecisionTree *, std::vector<int> &) = 0;
 
     virtual void print() = 0;
+
+    virtual void getOptypeDim(std::string &optype, std::vector<int> &dim,
+                              std::vector<int> &extra) = 0;
 };
 
 class TransSplit : public TransBasic {
@@ -40,8 +43,10 @@ class TransSplit : public TransBasic {
     TransSplit(int index, int in_dim, int extr = 0, int copys = 0)
         : index(index), in_dim(in_dim), extr(extr), copys(copys) {}
     DecisionTree *putTranspose(DecisionTree *, std::vector<int> &);
-    void dfsSpilt(DecisionTree *tree, std::string newvar);
+    void dfsSplit(DecisionTree *tree, std::string newvar);
     void print();
+    void getOptypeDim(std::string &optype, std::vector<int> &dim,
+                      std::vector<int> &extra);
 };
 
 class TransFuse : public TransBasic {
@@ -55,6 +60,8 @@ class TransFuse : public TransBasic {
     DecisionTree *putTranspose(DecisionTree *, std::vector<int> &);
     void dfsFuse(DecisionTree *tree, std::string newvar1, std::string newvar2);
     void print();
+    void getOptypeDim(std::string &optype, std::vector<int> &dim,
+                      std::vector<int> &extra);
 };
 
 class TransReorder : public TransBasic {
@@ -66,6 +73,8 @@ class TransReorder : public TransBasic {
     DecisionTree *putTranspose(DecisionTree *, std::vector<int> &);
     void dfsReorder(DecisionTree *, std::vector<int> &);
     void print();
+    void getOptypeDim(std::string &optype, std::vector<int> &dim,
+                      std::vector<int> &extra);
 };
 
 class TransposeEngine { // Singleton Pattern

@@ -38,12 +38,12 @@ int main() {
     //     op->compute();
 
     std::vector<std::shared_ptr<tpm::Operator>> all_ops;
-    // all_ops.emplace_back(new tpm::ExtendOp(1, 1));
-    // all_ops.emplace_back(new tpm::ExtendOp(1, 2));
-    // all_ops.emplace_back(new tpm::ConcatOp(0));
-    // all_ops.emplace_back(new tpm::ConcatOp(1));
-    // all_ops.emplace_back(new tpm::ConvOp(1, 1, 1, 1, 1, 1));
-    // all_ops.emplace_back(new tpm::SplitOp(1, std::vector<int>{2, 3}));
+    all_ops.emplace_back(new tpm::ExtendOp(1, 1));
+    all_ops.emplace_back(new tpm::ExtendOp(1, 2));
+    all_ops.emplace_back(new tpm::ConcatOp(0));
+    all_ops.emplace_back(new tpm::ConcatOp(1));
+    all_ops.emplace_back(new tpm::ConvOp(1, 1, 1, 1, 1, 1));
+    all_ops.emplace_back(new tpm::SplitOp(1, std::vector<int>{2, 3}));
     tpm::Generator mutant{};
     std::vector<tpm::SubGraph *> candidates;
     // mutant.run(sg, candidates, 6, all_ops);

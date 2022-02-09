@@ -16,7 +16,7 @@ int main() {
     g->relu(i2, i3);
 
     g->updateConnection();
-    tpm::SearchEngine engine;
+    tpm::SearchEngine<tpm::Generator> engine;
 
     std::shared_ptr<tpm::SubGraph> h(new tpm::SubGraph(g->getOperators()));
     auto newG = engine.fuse(h);

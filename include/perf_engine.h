@@ -13,9 +13,12 @@ class PerfEngine {
   private:
     int penaltyFlag = 1;
     std::map<ConvArgs, ConvResult> convPerf;
+    std::map<ConvArgs, ConvTransResult> convTransPerf;
     std::map<MatmulArgs, MatmulResult> matmulPerf;
     std::map<PoolArgs, float> maxPoolPerf;
     std::map<PoolArgs, float> avgPoolPerf;
+    std::map<G2BMMGBMMLArgs, float> g2bmmPerf;
+    std::map<G2BMMGBMMLArgs, float> gbmmlPerf;
 
     // for ConvOp
     float *inputPtr;
@@ -42,7 +45,7 @@ class PerfEngine {
     }
 
     ~PerfEngine() {
-        dumpPerfData();
+        // dumpPerfData();
         checkCudaError(cudaFree(inputPtr));
         checkCudaError(cudaFree(weightPtr));
         checkCudaError(cudaFree(outputPtr));
@@ -68,6 +71,9 @@ class PerfEngine {
     cudnnConvolutionFwdAlgo_t getConvAlgo(const ConvArgs &args) {
         return convPerf.at(args).algo;
     }
+    cudnnConvolutionBwdDataAlgo_t getConvTransAlgo(const ConvArgs &args) {
+        return convTransPerf.at(args).algo;
+    }
     cublasGemmAlgo_t getMatmulAlgo(const MatmulArgs &args) {
         return matmulPerf.at(args).algo;
     }
@@ -77,10 +83,24 @@ class PerfEngine {
         return 0.0;
     }
     double getOpPerf(Operator::OpType opType, const ConvArgs &args) {
-        return convPerf.at(args).time;
+        if (opType == Operator::Conv)
+            return convPerf.at(args).time;
+        else if (opType == Operator::ConvTrans)
+            return convTransPerf.at(args).time;
+        else
+            assert(false);
     }
     double getOpPerf(Operator::OpType opType, const MatmulArgs &args) {
         return matmulPerf.at(args).time;
+    }
+    double getOpPerf(Operator::OpType opType, const G2BMMGBMMLArgs &args) {
+        if (opType == Operator::G2BMM) {
+            return g2bmmPerf.at(args);
+        } else if (opType == Operator::GBMML) {
+            return gbmmlPerf.at(args);
+        } else {
+            assert(false);
+        }
     }
 
     template <class OpArgs>
@@ -88,21 +108,38 @@ class PerfEngine {
         return true;
     }
     bool checkOpPerf(Operator::OpType opType, const ConvArgs &args) {
-        return convPerf.count(args);
+        if (opType == Operator::Conv)
+            return convPerf.count(args);
+        else if (opType == Operator::ConvTrans)
+            return convTransPerf.count(args);
+        else
+            assert(false);
     }
     bool checkOpPerf(Operator::OpType opType, const MatmulArgs &args) {
         return matmulPerf.count(args);
+    }
+    bool checkOpPerf(Operator::OpType opType, const G2BMMGBMMLArgs &args) {
+        if (opType == Operator::G2BMM) {
+            return g2bmmPerf.count(args);
+        } else if (opType == Operator::GBMML) {
+            return gbmmlPerf.count(args);
+        } else {
+            assert(false);
+        }
     }
 
     void saveOpPerf(uint32_t opType, const ConvArgs &args,
                     const ConvResult &perf) {
         convPerf[args] = perf;
     }
+    void saveOpPerf(uint32_t opType, const ConvArgs &args,
+                    const ConvTransResult &perf) {
+        convTransPerf[args] = perf;
+    }
     void saveOpPerf(uint32_t opType, const MatmulArgs &args,
                     const MatmulResult &perf) {
         matmulPerf[args] = perf;
     }
-
     void saveOpPerf(uint32_t opType, const PoolArgs &args, const float perf) {
         if (opType == Operator::MaxPool)
             maxPoolPerf[args] = perf;
@@ -110,6 +147,15 @@ class PerfEngine {
             avgPoolPerf[args] = perf;
         else
             assert(0);
+    }
+    void saveOpPerf(uint32_t opType, const G2BMMGBMMLArgs &args, float perf) {
+        if (opType == Operator::G2BMM) {
+            g2bmmPerf[args] = perf;
+        } else if (opType == Operator::GBMML) {
+            gbmmlPerf[args] = perf;
+        } else {
+            assert(false);
+        }
     }
 
     void dumpPerfData();

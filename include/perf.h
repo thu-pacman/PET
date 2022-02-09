@@ -28,6 +28,13 @@ struct ConvResult {
     double time;
     cudnnConvolutionFwdAlgo_t algo;
     size_t workspaceSize;
+    bool fuseAct;
+};
+
+struct ConvTransResult {
+    double time;
+    cudnnConvolutionBwdDataAlgo_t algo;
+    size_t workspaceSize;
 };
 
 typedef std::tuple<bool, // transA
@@ -37,6 +44,13 @@ typedef std::tuple<bool, // transA
                    int,  // n
                    int>  // k
     MatmulArgs;
+
+typedef std::tuple<int, // b
+                   int, // m
+                   int, // k
+                   int, // width
+                   int> // dilation
+    G2BMMGBMMLArgs;
 
 typedef std::tuple<int, // kh
                    int, // kw

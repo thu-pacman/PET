@@ -31,7 +31,9 @@ namespace tpm {
 void PerfEngine::allocMem() {
     // the number of elements in float type
     // (1 << 28) * sizeof(float) = 1 GB
-    int elemNum = 1 << 28;
+    size_t elemNum = (1 << 28);
+    // 10GB for Longformer
+    // size_t longformerNum = 3lu * (1 << 30);
     size_t wsSize = 7ll << 30; // 7 GB
     checkCudaError(cudaMalloc(&inputPtr, elemNum * sizeof(float)));
     checkCudaError(cudaMalloc(&weightPtr, elemNum * sizeof(float)));

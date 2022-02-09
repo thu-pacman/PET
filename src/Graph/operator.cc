@@ -1,5 +1,6 @@
 #include "operator.h"
 #include "common.h"
+#include "custom_ops.h"
 #include "graph.h"
 #include "perf_engine.h"
 #include "tensor.h"
@@ -146,7 +147,8 @@ Tensor *ConvOp::compute() {
                             }
                     // output->setData({nn, ff, hh, ww}, val);
                     // auto oOffset = output->getOffset({nn, ff, hh, ww});
-                    auto oOffset = ww + w * (hh + h * (ff + f * nn));
+                    // TODO: check correctness, oh & ow or h & w?
+                    auto oOffset = ww + ow * (hh + oh * (ff + f * nn));
                     optr[oOffset] = val;
                 }
         }
@@ -409,45 +411,94 @@ double ConvOp::perf(PerfEngine *pe, int rounds, int warmupRounds) {
         wsData = pe->getWorkspace();
 
         // perform convolution
-        double durtime = 0.0;
+        double durtime = 0.0, durtime_fuse = 0.0;
         float alpha = 1.f, beta = 0.f;
         ch::time_point<ch::high_resolution_clock, ch::nanoseconds> beg, end;
+        beg = ch::high_resolution_clock::now();
         for (int j = 0; j < rounds + warmupRounds; ++j) {
             cudnnStatus_t stat;
-            if (act == None || bias == nullptr) {
+            // w/o bias & act
+            if (j == warmupRounds) {
                 checkCudaError(cudaDeviceSynchronize());
                 beg = ch::high_resolution_clock::now();
-                stat = cudnnConvolutionForward(pe->cudnnHandle(), &alpha,
-                                               inDesc, inData, knDesc, knData,
-                                               convDesc, ALGOS[i], wsData,
-                                               wsSize, &beta, outDesc, outData);
-                checkCudaError(cudaDeviceSynchronize());
-                end = ch::high_resolution_clock::now();
-            } else {
-                checkCudaError(cudaDeviceSynchronize());
-                beg = ch::high_resolution_clock::now();
-                stat = cudnnConvolutionBiasActivationForward(
-                    pe->cudnnHandle(), &alpha, inDesc, inData, knDesc, knData,
-                    convDesc, ALGOS[i], wsData, wsSize, &beta, outDesc, outData,
-                    biasDesc, biasData, actDesc, outDesc, outData);
-                checkCudaError(cudaDeviceSynchronize());
-                end = ch::high_resolution_clock::now();
             }
+            stat = cudnnConvolutionForward(
+                pe->cudnnHandle(), &alpha, inDesc, inData, knDesc, knData,
+                convDesc, ALGOS[i], wsData, wsSize, &beta, outDesc, outData);
             if (stat != CUDNN_STATUS_SUCCESS) {
+                // checkCudnnError(stat);
                 durtime = INFINITY;
                 break;
             }
-            if (j >= warmupRounds) {
-                durtime +=
-                    ch::duration_cast<ch::duration<double>>(end - beg).count() *
-                    1000; // ms
+
+            // // bias
+            // if (bias != nullptr) {
+            //     auto sz = outputs[0]->size();
+            //     // TODO: element wise
+            //     t += sz * 2 / 400;
+            // }
+
+            // // act
+            // if (act != None) {
+            //     checkCudaError(cudaDeviceSynchronize());
+            //     beg = ch::high_resolution_clock::now();
+            //     stat = cudnnActivationForward(pe->cudnnHandle(), actDesc,
+            //                                   &alpha, inDesc, inData, &beta,
+            //                                   outDesc, outData);
+            //     checkCudaError(cudaDeviceSynchronize());
+            //     end = ch::high_resolution_clock::now();
+            //     if (stat != CUDNN_STATUS_SUCCESS) {
+            //         durtime = INFINITY;
+            //         break;
+            //     }
+            //     t +=
+            //         ch::duration_cast<ch::duration<double>>(end -
+            //         beg).count() * 1000; // ms
+            // }
+        }
+        checkCudaError(cudaDeviceSynchronize());
+        end = ch::high_resolution_clock::now();
+        if (durtime == 0) {
+            auto t =
+                ch::duration_cast<ch::duration<double>>(end - beg).count() *
+                1000; // ms
+            durtime = double(t) / rounds;
+        }
+        if (durtime < best.time)
+            best = ConvResult{durtime, ALGOS[i], wsSize, false};
+
+        // w/ bias & act
+        for (int j = 0; j < rounds + warmupRounds; ++j) {
+            cudnnStatus_t stat;
+            if (j == warmupRounds) {
+                checkCudaError(cudaDeviceSynchronize());
+                beg = ch::high_resolution_clock::now();
+            }
+            stat = cudnnConvolutionBiasActivationForward(
+                pe->cudnnHandle(), &alpha, inDesc, inData, knDesc, knData,
+                convDesc, ALGOS[i], wsData, wsSize, &beta, outDesc, outData,
+                biasDesc, biasData, actDesc, outDesc, outData);
+            if (stat != CUDNN_STATUS_SUCCESS) {
+                // checkCudnnError(stat);
+                durtime_fuse = INFINITY;
+                break;
             }
         }
-        durtime /= rounds;
-        if (durtime < best.time) {
-            best = ConvResult{durtime, ALGOS[i], wsSize};
+        checkCudaError(cudaDeviceSynchronize());
+        end = ch::high_resolution_clock::now();
+        if (durtime_fuse == 0) {
+            auto t =
+                ch::duration_cast<ch::duration<double>>(end - beg).count() *
+                1000; // ms
+            durtime_fuse = double(t) / rounds;
         }
-        // std::cout << "[perf] " << ALGOS[i] << ", " << durtime << std::endl;
+        if (durtime_fuse < best.time) {
+            best = ConvResult{durtime_fuse, ALGOS[i], wsSize, true};
+        }
+        // std::cout << "[perf conv] " << ALGOS[i] << ", "
+        //           << "act: " << act << ", unfused, " << durtime << ", fused,
+        //           "
+        //           << durtime_fuse << std::endl;
     }
 
     // finalize
@@ -774,6 +825,7 @@ double MatmulOp::perf(PerfEngine *pe, int rounds, int warmupRounds) {
     pe->saveOpPerf(Matmul, args, best);
     return best.time;
 }
+
 void MatmulOp::inferSplittingPoints() {
     // Assume no prior splitting points
     for (auto tensor : inputs) {
@@ -782,6 +834,765 @@ void MatmulOp::inferSplittingPoints() {
     }
     outputs[0]->initSplittingPoints();
 }
+
+ConvTransOp::ConvTransOp(Tensor *input, Tensor *weight, Tensor *output, int ph,
+                         int pw, int sh, int sw, int dh, int dw, Tensor *bias,
+                         ActType act)
+    : Operator(ConvTrans, {input, weight}, {output}), ph(ph), pw(pw), sh(sh),
+      sw(sw), dh(dh), dw(dw), bias(bias), act(act), padding(Other) {
+    weight->setType(Tensor::Weight);
+    assert(checkValid({input, weight}));
+    computeShape();
+    setPaddingMode();
+    initHash();
+    assert(output->getDims().size() == 4);
+}
+
+ConvTransOp::ConvTransOp(Tensor *input, Tensor *weight, int ph, int pw, int sh,
+                         int sw, int dh, int dw, Tensor *bias, ActType act)
+    : Operator(ConvTrans, {input, weight}, {}), ph(ph), pw(pw), sh(sh), sw(sw),
+      dh(dh), dw(dw), bias(bias), act(act), padding(Other) {
+    weight->setType(Tensor::Weight);
+    assert(checkValid({input, weight}));
+    outputs.emplace_back(new Tensor());
+    computeShape();
+    setPaddingMode();
+    initHash();
+}
+
+ConvTransOp::ConvTransOp(int ph, int pw, int sh, int sw, int dh, int dw,
+                         Tensor *bias, ActType act)
+    : Operator(ConvTrans), ph(ph), pw(pw), sh(sh), sw(sw), dh(dh), dw(dw),
+      bias(bias), act(act), padding(Other) {
+    initHash();
+}
+
+ConvTransOp::ConvTransOp(Tensor *input, Tensor *weight, Tensor *output,
+                         PaddingMode pm, int sh, int sw, int dh, int dw,
+                         Tensor *bias, ActType act)
+    : Operator(ConvTrans, {input, weight}, {output}), sh(sh), sw(sw), dh(dh),
+      dw(dw), bias(bias), act(act), padding(pm) {
+    assert(pm != Other);
+    weight->setType(Tensor::Weight);
+    assert(checkValid({input, weight}));
+    assert(output->getDims().size() == 4);
+    // set padding size
+    computeShape();
+    initHash();
+}
+ConvTransOp::ConvTransOp(Tensor *input, Tensor *weight, PaddingMode pm, int sh,
+                         int sw, int dh, int dw, Tensor *bias, ActType act)
+    : Operator(ConvTrans, {input, weight}, {}), sh(sh), sw(sw), dh(dh), dw(dw),
+      bias(bias), act(act), padding(pm) {
+    assert(pm != Other);
+    weight->setType(Tensor::Weight);
+    assert(checkValid({input, weight}));
+    outputs.emplace_back(new Tensor());
+    computeShape();
+    initHash();
+}
+ConvTransOp::ConvTransOp(PaddingMode pm, int sh, int sw, int dh, int dw,
+                         Tensor *bias, ActType act)
+    : Operator(ConvTrans), sh(sh), sw(sw), dh(dh), dw(dw), bias(bias), act(act),
+      padding(pm) {
+    // assert(pm != Other);
+    initHash();
+}
+
+ConvTransOp::ConvTransOp(const ConvTransOp &rhs)
+    : Operator(rhs), ph(rhs.ph), pw(rhs.pw), sh(rhs.sh), sw(rhs.sw), dh(rhs.dh),
+      dw(rhs.dw), bias(rhs.bias), act(rhs.act), padding(rhs.padding) {}
+
+void ConvTransOp::initHash() {
+    hash = type;
+    hash = hashAppend(hash, padding);
+    if (padding == Other) {
+        hash = hashAppend(hash, ph);
+        hash = hashAppend(hash, pw);
+    }
+    hash = hashAppend(hash, sh);
+    hash = hashAppend(hash, sw);
+    hash = hashAppend(hash, dh);
+    hash = hashAppend(hash, dw);
+    hash = hashPack(hash);
+}
+
+Tensor *ConvTransOp::compute() {
+    if (outputs[0]->isComputed())
+        return outputs[0];
+
+    auto input = inputs[0], weight = inputs[1], output = outputs[0];
+    auto n = input->getDims()[0];
+    auto c = input->getDims()[1];
+    auto h = input->getDims()[2];
+    auto w = input->getDims()[3];
+    auto f = weight->getDims()[0];
+    auto cpg = weight->getDims()[1];
+    auto r = weight->getDims()[2];
+    auto s = weight->getDims()[3];
+    // TODO: check correctness, group
+    auto g = c / cpg;
+    if (f % g != 0)
+        return nullptr;
+    output->dataMalloc();
+    auto outDim = output->getDims();
+    auto oh = outDim[2], ow = outDim[3];
+    auto iptr = input->getDataPtr(), wptr = weight->getDataPtr(),
+         optr = output->getDataPtr();
+    for (int nn = 0; nn < n; nn++) {
+#pragma omp parallel for
+        for (int ff = 0; ff < f; ff++) {
+            for (int hh = 0; hh < oh; hh++)
+                for (int ww = 0; ww < ow; ww++) {
+                    int gidx = ff / (f / g);
+                    VType val = 0;
+                    for (int cc = 0; cc < cpg; cc++)
+                        for (int rr = 0; rr < r; rr++)
+                            for (int ss = 0; ss < s; ss++) {
+                                int posH = (hh + ph - rr * dh) / sh;
+                                int posW = (ww + pw - ss * dw) / sw;
+                                if (posH < 0 || posH >= h || posW < 0 ||
+                                    posW >= w)
+                                    continue;
+                                auto iOffset =
+                                         posW +
+                                         w * (posH +
+                                              h * ((cc + gidx * cpg) + c * nn)),
+                                     wOffset =
+                                         ss + s * (rr + r * (cc + cpg * ff));
+                                auto inputVal = iptr[iOffset],
+                                     weightVal = wptr[wOffset];
+                                val += weightVal * inputVal;
+                            }
+                    auto oOffset = ww + ow * (hh + oh * (ff + f * nn));
+                    optr[oOffset] = val;
+                }
+        }
+    }
+    output->setComputed();
+    return output;
+}
+
+std::pair<std::vector<DimRange>, std::function<bool()>>
+ConvTransOp::compute(DimRange dr) {
+    if (dr.notValid())
+        return {};
+    if (dr.isEmpty())
+        return {{DimRange::getEmpty(), DimRange::getEmpty()},
+                []() { return true; }};
+    auto input = inputs[0], weight = inputs[1];
+    auto c = input->getDims()[1];
+    auto f = weight->getDims()[0];
+    auto cpg = weight->getDims()[1];
+    auto r = weight->getDims()[2];
+    auto s = weight->getDims()[3];
+    auto g = c / cpg;
+    if (f % g != 0)
+        return {};
+    auto outDim = outputs[0]->getDims();
+    // TODO: call gpu compute
+    if (!dr.isSinglePos()) {
+        return {{DimRange::getAllPos(), DimRange::getAllPos()},
+                [this]() { return compute() != nullptr; }};
+    } else {
+        if (dr.getBegin().size() != 4 /*|| dr.getEnd().size() != 4*/)
+            return {};
+        return {
+            {DimRange::getAllPos(), DimRange::getAllPos()},
+            [this, f, g, cpg, r, s, dr]() {
+                auto &pos = dr.getBegin();
+                auto nn = pos[0], ff = pos[1], hh = pos[2], ww = pos[3];
+                auto input = inputs[0], weight = inputs[1], output = outputs[0];
+                int gidx = ff / (f / g);
+                VType val = 0;
+                for (int cc = 0; cc < cpg; cc++)
+                    for (int rr = 0; rr < r; rr++)
+                        for (int ss = 0; ss < s; ss++) {
+                            int posH = (hh + ph - rr * dh) / sh;
+                            int posW = (ww + pw - ss * dw) / sw;
+                            VType weightVal = weight->getData({ff, cc, rr, ss});
+                            VType inputVal = input->getData(
+                                {nn, cc + gidx * cpg, posH, posW});
+                            val += weightVal * inputVal;
+                        }
+                output->dataMalloc();
+                return output->setData({nn, ff, hh, ww}, val);
+            }};
+    }
+}
+
+Dim ConvTransOp::computeShape() {
+    auto input = inputs[0], weight = inputs[1], output = outputs[0];
+    auto n = input->getDims()[0];
+    auto h = input->getDims()[1];
+    auto w = input->getDims()[2];
+    [[maybe_unused]] auto f = weight->getDims()[0];
+    auto r = weight->getDims()[1];
+    auto s = weight->getDims()[2];
+    auto c = weight->getDims()[3];
+    int on = n, oc = c;
+    int oh = 0, ow = 0;
+    assert(f == input->getDims()[3]);
+    // Set padding size
+    if (padding == Other) {
+        oh = h * sh - ph * 2 + (r - sh) * dh;
+        ow = w * sw - pw * 2 + (s - sw) * dw;
+    } else if (padding == Same) {
+        oh = h * sh;
+        ow = w * sw;
+        ph = (h - oh * sh + (r - sh) * dh) / 2;
+        pw = (w - ow * sw + (s - sw) * dw) / 2;
+    } else if (padding == Valid) {
+        ph = 0;
+        pw = 0;
+        oh = h * sh - ph * 2 + (r - sh) * dh;
+        ow = w * sw - pw * 2 + (s - sw) * dw;
+    }
+    auto ret = {on, oh, ow, oc};
+    output->setDims(ret);
+    output->setType(Tensor::Input);
+    return ret;
+}
+
+Dim ConvTransOp::computeOutputPenalty(const Dim &p) {
+    assert(false);
+    assert(p.size() == 4);
+    auto np = p[0], hp = p[2], wp = p[3];
+    auto input = inputs[0], weight = inputs[1], output = outputs[0];
+    auto n = input->getDims()[0] + np;
+    auto h = input->getDims()[2] + hp;
+    auto w = input->getDims()[3] + wp;
+    auto f = weight->getDims()[0];
+    auto r = weight->getDims()[2];
+    auto s = weight->getDims()[3];
+    int on = n, oc = f;
+    int oh = 0, ow = 0;
+    // Set padding size
+    if (padding == Other) {
+        oh = h * sh - ph * 2 + (r - sh) * dh;
+        ow = w * sw - pw * 2 + (s - sw) * dw;
+    } else if (padding == Same) {
+        oh = h * sh;
+        ow = w * sw;
+        ph = (h - oh * sh + (r - sh) * dh) / 2;
+        pw = (w - ow * sw + (s - sw) * dw) / 2;
+    } else if (padding == Valid) {
+        ph = 0;
+        pw = 0;
+        oh = h * sh - ph * 2 + (r - sh) * dh;
+        ow = w * sw - pw * 2 + (s - sw) * dw;
+    }
+    auto outDim = output->getDims();
+    return {on - outDim[0], oc - outDim[1], oh - outDim[2], ow - outDim[3]};
+}
+
+// Only called by constructors which explicitly set padding size
+// computeShape() is called in constructor
+void ConvTransOp::setPaddingMode() {
+    auto iDim = inputs[0]->getDims();
+    auto oDim = outputs[0]->getDims();
+    if (iDim[1] == oDim[1] && iDim[2] == oDim[2])
+        padding = Same;
+    else if (ph == 0 && pw == 0)
+        padding = Valid;
+}
+
+// TODO: check correctness
+bool ConvTransOp::checkValid(const TensorVec &inputs) {
+    auto input = inputs[0], weight = inputs[1];
+    assert(input != nullptr && weight != nullptr);
+    // TODO: group trans_conv is not supported by now
+    assert(input->getDims()[3] == weight->getDims()[0]);
+    // TODO: dilated trans_conv is not supported by now
+    assert(dh == 1 && dw == 1);
+    if (input->getType() != Tensor::Input ||
+        weight->getType() != Tensor::Weight)
+        return false;
+    if (input->getDims().size() != 4 || weight->getDims().size() != 4)
+        return false;
+    if (input->getDims()[3] % weight->getDims()[0] != 0)
+        return false;
+    return true;
+}
+
+double ConvTransOp::perf(PerfEngine *pe, int rounds, int warmupRounds) {
+    constexpr int N_ALGO = 7;
+    constexpr cudnnConvolutionBwdDataAlgo_t ALGOS[N_ALGO] = {
+        CUDNN_CONVOLUTION_BWD_DATA_ALGO_0, /* non-deterministic */
+        CUDNN_CONVOLUTION_BWD_DATA_ALGO_1,
+        CUDNN_CONVOLUTION_BWD_DATA_ALGO_FFT,
+        CUDNN_CONVOLUTION_BWD_DATA_ALGO_FFT_TILING,
+        CUDNN_CONVOLUTION_BWD_DATA_ALGO_WINOGRAD,
+        CUDNN_CONVOLUTION_BWD_DATA_ALGO_WINOGRAD_NONFUSED,
+        CUDNN_CONVOLUTION_BWD_DATA_ALGO_COUNT};
+
+    auto input = inputs[0], weight = inputs[1];
+    auto n = input->getDims()[0] + pe->withPenalty() * input->getPenalty()[0];
+    auto f = input->getDims()[3] + pe->withPenalty() * input->getPenalty()[1];
+    auto h = input->getDims()[1] + pe->withPenalty() * input->getPenalty()[2];
+    auto w = input->getDims()[2] + pe->withPenalty() * input->getPenalty()[3];
+    auto c = weight->getDims()[3];
+    auto cpg = weight->getDims()[3];
+    auto r = weight->getDims()[1];
+    auto s = weight->getDims()[2];
+    // FIXME: group cannot be inferred from input and weight for convTrans
+    auto g = c / cpg;
+    assert(g == 1);
+
+    ConvArgs args = getArgs(pe->withPenalty());
+
+    if (pe->checkOpPerf(ConvTrans, args)) {
+        return pe->getOpPerf(ConvTrans, args);
+    }
+
+    int channelsPerGrp = cpg; //, channels = c;
+
+    // get inputs
+    cudnnTensorDescriptor_t inDesc;
+    checkCudnnError(cudnnCreateTensorDescriptor(&inDesc));
+    checkCudnnError(cudnnSetTensor4dDescriptor(inDesc, CUDNN_TENSOR_NCHW,
+                                               CUDNN_DATA_FLOAT, n, f, h, w));
+
+    float *inData;
+    inData = pe->getInputPtr();
+
+    // get kernels
+    cudnnFilterDescriptor_t knDesc;
+    checkCudnnError(cudnnCreateFilterDescriptor(&knDesc));
+    checkCudnnError(cudnnSetFilter4dDescriptor(
+        knDesc, CUDNN_DATA_FLOAT, CUDNN_TENSOR_NCHW, f, channelsPerGrp, r, s));
+
+    float *knData;
+    knData = pe->getWeightPtr();
+
+    // get bias
+    cudnnTensorDescriptor_t biasDesc;
+    checkCudnnError(cudnnCreateTensorDescriptor(&biasDesc));
+    checkCudnnError(cudnnSetTensor4dDescriptor(biasDesc, CUDNN_TENSOR_NCHW,
+                                               CUDNN_DATA_FLOAT, 1, c, 1, 1));
+
+    // float *biasData;
+    // biasData = pe->getBiasPtr();
+
+    // get convlution descriptor
+    cudnnConvolutionDescriptor_t convDesc;
+    checkCudnnError(cudnnCreateConvolutionDescriptor(&convDesc));
+    checkCudnnError(cudnnSetConvolution2dDescriptor(
+        convDesc, ph, pw, sh, sw, dh, dw, CUDNN_CROSS_CORRELATION,
+        CUDNN_DATA_FLOAT));
+    if (g > 1) {
+        checkCudnnError(cudnnSetConvolutionGroupCount(convDesc, g));
+    }
+
+    // get activation descriptor
+    cudnnActivationDescriptor_t actDesc;
+    checkCudnnError(cudnnCreateActivationDescriptor(&actDesc));
+    // NOT_PROPAGATE_NAN is requierd by cudnnConvolotionBiasActivationForward
+    switch (act) {
+    case Relu:
+        checkCudnnError(cudnnSetActivationDescriptor(
+            actDesc, CUDNN_ACTIVATION_RELU, CUDNN_NOT_PROPAGATE_NAN, 0));
+        break;
+    case Sigmoid:
+        checkCudnnError(cudnnSetActivationDescriptor(
+            actDesc, CUDNN_ACTIVATION_SIGMOID, CUDNN_NOT_PROPAGATE_NAN, 0));
+        break;
+    case None:
+        checkCudnnError(cudnnSetActivationDescriptor(
+            actDesc, CUDNN_ACTIVATION_IDENTITY, CUDNN_NOT_PROPAGATE_NAN, 0));
+        break;
+    default:
+        assert(false);
+    }
+
+    // get outputs
+    int outn = outputs[0]->getDims()[0], outc = outputs[0]->getDims()[3],
+        outh = outputs[0]->getDims()[1], outw = outputs[0]->getDims()[2];
+    // checkCudnnError(cudnnGetConvolution2dForwardOutputDim(
+    // convDesc, inDesc, knDesc, &outn, &outc, &outh, &outw));
+    cudnnTensorDescriptor_t outDesc;
+    checkCudnnError(cudnnCreateTensorDescriptor(&outDesc));
+    checkCudnnError(cudnnSetTensor4dDescriptor(
+        outDesc, CUDNN_TENSOR_NCHW, CUDNN_DATA_FLOAT, outn, outc, outh, outw));
+
+    float *outData;
+    outData = pe->getOutputPtr();
+
+    ConvTransResult best;
+    best.time = INFINITY;
+    for (int i = 0; i < N_ALGO; i++) {
+        // get workspace
+        size_t wsSize;
+        auto stat = cudnnGetConvolutionBackwardDataWorkspaceSize(
+            pe->cudnnHandle(), knDesc, inDesc, convDesc, outDesc, ALGOS[i],
+            &wsSize);
+        if (stat != CUDNN_STATUS_SUCCESS) {
+            continue;
+        }
+        // assert(wsSize < (size_t)3 * 1024 * 1024 * 1024);
+        if (wsSize >= (size_t)10 * 1024 * 1024 * 1024)
+            continue;
+        float *wsData;
+        wsData = pe->getWorkspace();
+
+        // perform convolution
+        double durtime = 0.0;
+        float alpha = 1.f, beta = 0.f;
+        ch::time_point<ch::high_resolution_clock, ch::nanoseconds> beg, end;
+        for (int j = 0; j < rounds + warmupRounds; ++j) {
+            cudnnStatus_t stat;
+            if (act == None || bias == nullptr) {
+                checkCudaError(cudaDeviceSynchronize());
+                beg = ch::high_resolution_clock::now();
+                stat = cudnnConvolutionBackwardData(
+                    pe->cudnnHandle(), &alpha, knDesc, knData, inDesc, inData,
+                    convDesc, ALGOS[i], wsData, wsSize, &beta, outDesc,
+                    outData);
+                checkCudaError(cudaDeviceSynchronize());
+                end = ch::high_resolution_clock::now();
+            } else {
+                // TODO: Bias not supported by now
+                assert(false);
+                // checkCudaError(cudaDeviceSynchronize());
+                // beg = ch::high_resolution_clock::now();
+                // stat = cudnnConvolutionBiasActivationBackwardData(
+                //     pe->cudnnHandle(), &alpha, inDesc, inData, knDesc,
+                //     knData, convDesc, ALGOS[i], wsData, wsSize, &beta,
+                //     outDesc, outData, biasDesc, biasData, actDesc, outDesc,
+                //     outData);
+                // checkCudaError(cudaDeviceSynchronize());
+                // end = ch::high_resolution_clock::now();
+            }
+            if (stat != CUDNN_STATUS_SUCCESS) {
+                durtime = INFINITY;
+                break;
+            }
+            if (j >= warmupRounds) {
+                durtime +=
+                    ch::duration_cast<ch::duration<double>>(end - beg).count() *
+                    1000; // ms
+            }
+        }
+        durtime /= rounds;
+        if (durtime < best.time) {
+            best = ConvTransResult{durtime, ALGOS[i], wsSize};
+        }
+        // std::cout << "[perf] " << ALGOS[i] << ", " << durtime << std::endl;
+    }
+
+    // finalize
+    checkCudnnError(cudnnDestroyTensorDescriptor(inDesc));
+    checkCudnnError(cudnnDestroyTensorDescriptor(outDesc));
+    checkCudnnError(cudnnDestroyFilterDescriptor(knDesc));
+    checkCudnnError(cudnnDestroyConvolutionDescriptor(convDesc));
+
+    pe->saveOpPerf(ConvTrans, args, best);
+
+    return best.time;
+}
+
+bool ConvTransOp::same(const ConvTransOp &rhs) {
+    bool ret = true;
+    if (padding == Other)
+        ret &= ph == rhs.ph && pw == rhs.pw;
+    else
+        ret &= padding == rhs.padding;
+    ret &= sh == rhs.sh && sw == rhs.sw;
+    ret &= dh == rhs.dh && dw == rhs.dw;
+    return ret;
+}
+
+// TODO: may wrong
+void ConvTransOp::inferSplittingPoints() {
+    auto inputSplittingPoints = getInputs()[0]->getSplittingPoints();
+    // : Operator(Conv, {input, weight}, {output}), ph(ph), pw(pw), sh(sh),
+    // sw(sw),
+    //   dh(dh), dw(dw), bias(bias), act(act) {
+    assert(inputSplittingPoints->size() == 4);
+    for (auto &points : *inputSplittingPoints)
+        assert(points.empty());
+
+    SplittingPoints splittingPoints(4);
+    int h = inputs[0]->getDims()[2], w = inputs[0]->getDims()[3];
+    int kh = inputs[1]->getDims()[2], kw = inputs[1]->getDims()[3];
+
+    auto insert = [](std::vector<int> &points, int h, int kh, int ph, int sh,
+                     int dh) {
+        int last_left_point = (ph + sh - 1) / sh;
+        // int first_right_point = (h - 1 - dh * (kh - 1)) / sh + 1;
+        int first_right_point = (ph + h - dh * (kh - 1) + sh - 1) / sh;
+        for (int i = 1; i <= last_left_point; ++i)
+            points.emplace_back(i);
+        // omit the boudary point
+        for (int i = first_right_point; i < h; ++i)
+            points.emplace_back(i);
+    };
+    insert(splittingPoints[2], h, kh, ph, sh, dh);
+    insert(splittingPoints[3], w, kw, pw, sw, dw);
+    getOutput()->setSplittingPoints(std::move(splittingPoints));
+}
+
+G2BMMOp::G2BMMOp(Tensor *A, Tensor *B, int width, int dilation, Tensor *bias,
+                 ActType act)
+    : Operator(G2BMM, {A, B}, {}), width(width), dilation(dilation), bias(bias),
+      act(act) {
+    checkAndSetTensorTypeForConstructor(A, B);
+    assert(checkValid({A, B}));
+    outputs.emplace_back(new Tensor);
+    computeShape();
+    initHash();
+}
+
+G2BMMOp::G2BMMOp(int width, int dilation, Tensor *bias, ActType act)
+    : Operator(G2BMM), width(width), dilation(dilation), bias(bias), act(act) {
+    initHash();
+}
+
+void G2BMMOp::initHash() {
+    hash = type;
+    hash = hashAppend(hash, width);
+    hash = hashPack(hash);
+}
+
+// This function will only be called by constructor to set the tensor type
+// TODO: this function can be removed when more tensor types are introduced
+void G2BMMOp::checkAndSetTensorTypeForConstructor(Tensor *A, Tensor *B) {
+    if (A->getType() == Tensor::Input && B->getType() == Tensor::Input)
+        B->setType(Tensor::Weight);
+}
+
+// TODO: fill compute
+Tensor *G2BMMOp::compute() {
+    if (outputs[0]->isComputed())
+        return outputs[0];
+
+    // auto A = inputs[0], B = inputs[1], C = outputs[0];
+    auto C = outputs[0];
+    C->dataMalloc();
+    C->setComputed();
+    return C;
+}
+
+// TODO: is needed?
+void G2BMMOp::dimExtend(Tensor *t) {
+    assert(false);
+    // auto dm = t->getDims();
+    // if (dm.size() == 2) {
+    //     dm.insert(dm.begin(), 1);
+    //     t->setDims(dm);
+    // }
+}
+
+// TODO: fill compute
+std::pair<std::vector<DimRange>, std::function<bool()>>
+G2BMMOp::compute(DimRange dr) {
+    return {};
+}
+
+bool G2BMMOp::checkValid(const TensorVec &inputs) {
+    auto A = inputs[0], B = inputs[1];
+    if (A->getType() == Tensor::Weight && B->getType() == Tensor::Weight)
+        return false;
+    if (A->getDims().size() != 3 || B->getDims().size() != 3) {
+        return false;
+    }
+    if (A->getDims()[0] != B->getDims()[0]) {
+        return false;
+    }
+    if (A->getDims()[1] != B->getDims()[1]) {
+        return false;
+    }
+    if (A->getDims()[2] != B->getDims()[2]) {
+        return false;
+    }
+    if (width < 0) {
+        return false;
+    }
+    return true;
+}
+
+Dim G2BMMOp::computeShape() {
+    auto A = inputs[0], C = outputs[0];
+    auto b = A->getDims()[0];
+    auto m = A->getDims()[1];
+    auto ret = {b, m, 2 * width + 1};
+    C->setDims(ret);
+    C->setType(Tensor::Input);
+    return ret;
+}
+
+double G2BMMOp::perf(PerfEngine *pe, int rounds, int warmupRounds) {
+    auto A = inputs[0];
+    auto bs = A->getDims()[0];
+    auto n = A->getDims()[1];
+    auto m = A->getDims()[2];
+
+    G2BMMGBMMLArgs args = getArgs();
+    if (pe->checkOpPerf(G2BMM, args)) {
+        return pe->getOpPerf(G2BMM, args);
+    }
+
+    float *dA, *dB, *dC;
+    dA = pe->getMatA();
+    dB = pe->getMatB();
+    dC = pe->getMatC();
+
+    // G2BMM cost too long
+    if (A->getDims()[0] > 100) {
+        warmupRounds = 1;
+        rounds = 3;
+    }
+
+    for (int i = 0; i < warmupRounds; ++i) {
+        _sg2bmm(dA, dB, dC, bs, n, m, width, dilation);
+    }
+    checkCudaError(cudaDeviceSynchronize());
+
+    cudaEvent_t start, stop;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+    cudaEventRecord(start);
+    for (int i = 0; i < rounds; ++i) {
+        _sg2bmm(dA, dB, dC, bs, n, m, width, dilation);
+    }
+    cudaEventRecord(stop);
+    checkCudaError(cudaDeviceSynchronize());
+    float milliseconds = 0;
+    cudaEventElapsedTime(&milliseconds, start, stop);
+    milliseconds /= rounds;
+    pe->saveOpPerf(G2BMM, args, milliseconds);
+    return milliseconds;
+}
+
+// TODO: splitting points
+void G2BMMOp::inferSplittingPoints() { assert(false); }
+
+GBMMLOp::GBMMLOp(Tensor *A, Tensor *B, int dilation, Tensor *bias, ActType act)
+    : Operator(GBMML, {A, B}, {}), dilation(dilation), bias(bias), act(act) {
+    checkAndSetTensorTypeForConstructor(A, B);
+    assert(checkValid({A, B}));
+    outputs.emplace_back(new Tensor);
+    computeShape();
+    initHash();
+}
+
+GBMMLOp::GBMMLOp(int dilation, Tensor *bias, ActType act)
+    : Operator(GBMML), dilation(dilation), bias(bias), act(act) {
+    initHash();
+}
+
+void GBMMLOp::initHash() {
+    hash = type;
+    hash = hashPack(hash);
+}
+
+// This function will only be called by constructor to set the tensor type
+// TODO: this function can be removed when more tensor types are introduced
+void GBMMLOp::checkAndSetTensorTypeForConstructor(Tensor *A, Tensor *B) {
+    // Both of inputs tensor are Input type in attention
+    // if (A->getType() == Tensor::Input && B->getType() == Tensor::Input)
+    //     B->setType(Tensor::Weight);
+}
+
+// TODO: fill compute
+Tensor *GBMMLOp::compute() {
+    if (outputs[0]->isComputed())
+        return outputs[0];
+
+    // auto A = inputs[0], B = inputs[1], C = outputs[0];
+    auto C = outputs[0];
+    C->dataMalloc();
+    C->setComputed();
+    return C;
+}
+
+// TODO: is needed?
+void GBMMLOp::dimExtend(Tensor *t) {
+    assert(false);
+    // auto dm = t->getDims();
+    // if (dm.size() == 2) {
+    //     dm.insert(dm.begin(), 1);
+    //     t->setDims(dm);
+    // }
+}
+
+// TODO: fill compute
+std::pair<std::vector<DimRange>, std::function<bool()>>
+GBMMLOp::compute(DimRange dr) {
+    return {};
+}
+
+bool GBMMLOp::checkValid(const TensorVec &inputs) {
+    auto A = inputs[0], B = inputs[1];
+    if (A->getType() == Tensor::Weight && B->getType() == Tensor::Weight)
+        return false;
+    if (A->getDims().size() != 3 || B->getDims().size() != 3) {
+        return false;
+    }
+    if (A->getDims()[0] != B->getDims()[0]) {
+        return false;
+    }
+    if (A->getDims()[1] != B->getDims()[1]) {
+        return false;
+    }
+    // TODO: is sufficient?
+    if (A->getDims()[2] % 2 == 0) {
+        return false;
+    }
+    return true;
+}
+
+Dim GBMMLOp::computeShape() {
+    auto A = inputs[0], B = inputs[1], C = outputs[0];
+    auto b = A->getDims()[0];
+    auto m = A->getDims()[1];
+    auto k = B->getDims()[2];
+    auto ret = {b, m, k};
+    C->setDims(ret);
+    C->setType(Tensor::Input);
+    return ret;
+}
+
+double GBMMLOp::perf(PerfEngine *pe, int rounds, int warmupRounds) {
+    auto A = inputs[0], B = inputs[1];
+    auto bs = A->getDims()[0];
+    auto n = A->getDims()[1];
+    auto w = (A->getDims()[2] - 1) / 2;
+    auto m = B->getDims()[2];
+
+    G2BMMGBMMLArgs args = getArgs();
+    if (pe->checkOpPerf(GBMML, args)) {
+        return pe->getOpPerf(GBMML, args);
+    }
+
+    float *dA, *dB, *dC;
+    dA = pe->getMatA();
+    dB = pe->getMatB();
+    dC = pe->getMatC();
+
+    for (int i = 0; i < warmupRounds; ++i) {
+        _sgbmml(dA, dB, dC, bs, n, m, w, dilation);
+    }
+    checkCudaError(cudaDeviceSynchronize());
+
+    cudaEvent_t start, stop;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+    cudaEventRecord(start);
+    for (int i = 0; i < rounds; ++i) {
+        _sgbmml(dA, dB, dC, bs, n, m, w, dilation);
+    }
+    cudaEventRecord(stop);
+    checkCudaError(cudaDeviceSynchronize());
+    float milliseconds = 0;
+    cudaEventElapsedTime(&milliseconds, start, stop);
+    milliseconds /= rounds;
+    pe->saveOpPerf(GBMML, args, milliseconds);
+    return milliseconds;
+}
+
+// TODO: splitting points
+void GBMMLOp::inferSplittingPoints() { assert(false); }
 
 PadOp::PadOp(Tensor *input, Tensor *output, const Dim &begin, const Dim &end)
     : Operator(Pad, {input}, {output}), begin(begin), end(end) {
@@ -1566,16 +2377,11 @@ Dim TransposeOp::computeShape() {
 double TransposeOp::perf(PerfEngine *pe, int rounds, int warmupRounds) {
     if (inputs[0]->getType() == Tensor::Weight) {
         return 0;
-    }
-    else if (inputs[0]->getOutputOf() != nullptr && inputs[0]->getOutputOf()->getType() == Transpose) {
+    } else if (inputs[0]->getOutputOf() != nullptr &&
+               inputs[0]->getOutputOf()->getType() == Transpose) {
         return 0;
-    }
-    else {
-    	auto mdenv = getenv("PET_MUTATION_DEPTH");
-        if (mdenv != nullptr)
-	    return 0;
-	else 
-            return inputs[0]->size() * sizeof(float) * 2 / (400.0 * 1024 * 1024);
+    } else {
+        return inputs[0]->size() * sizeof(float) * 2 / (400.0 * 1024 * 1024);
         // Too large overhead
         // CodeEngine code_engine;
         // code_engine.genTransposeCompute(*this);
@@ -1816,7 +2622,8 @@ BatchNormOp::BatchNormOp(Tensor *input, Tensor *scale, Tensor *bias,
                          float epsilon, float momentum)
     : Operator(BatchNorm, {input}, {output}), epsilon(epsilon),
       momentum(momentum), scale(scale), bias(bias), mean(mean), var(var) {
-    assert(checkValid({input}));
+    // HACK: for convTransposed
+    // assert(checkValid({input}));
     scale->setType(Tensor::Weight);
     bias->setType(Tensor::Weight);
     mean->setType(Tensor::Weight);
@@ -2672,6 +3479,30 @@ Dim SoftmaxOp::computeShape() {
     return dim;
 }
 
+TanhOp::TanhOp(Tensor *input) : Operator(Tanh, {input}, {}) {
+    outputs.emplace_back(new Tensor());
+    computeShape();
+    initHash();
+}
+
+void TanhOp::initHash() {
+    hash = type;
+    hash = hashPack(hash);
+}
+
+Tensor *TanhOp::compute() {
+    assert(false);
+    return nullptr;
+}
+
+std::pair<std::vector<DimRange>, std::function<bool()>>
+TanhOp::compute(DimRange dr) {
+    assert(false);
+    return {};
+}
+
+Dim TanhOp::computeShape() { return inputs[0]->getDims(); }
+
 IdentityOp::IdentityOp(Tensor *input) : Operator(Identity, {input}, {}) {
     outputs.emplace_back(new Tensor());
     computeShape();
@@ -2757,6 +3588,294 @@ void ActivationOp::initHash() {
     hash = type;
     hash = hashAppend(hash, actType);
     hash = hashPack(hash);
+}
+
+// TODO FIXME: hash may be wrong. Should hash the TVM string.
+void MemBoundOp::initHash() {
+    hash = type;
+    // TODO: change it to expr hash.
+    hash = hashAppend(hash, exec_time);
+    hash = hashPack(hash);
+}
+
+bool MemBoundOp::isComputeWeight() const {
+    for (auto input : inputs) {
+        if (input->getType() != Tensor::Weight) {
+            return false;
+        }
+    }
+    return true;
+}
+
+void MemBoundOp::setWeight() {
+    if (isComputeWeight()) {
+        for (auto output : outputs)
+            output->setType(Tensor::Weight);
+    }
+}
+
+void ConvOp::getOptypeAttr(
+    std::string &optype, std::map<std::string, std::string> &attr,
+    std::map<std::string, std::vector<int>> &extra) const {
+    optype = "Conv";
+    auto input = inputs[0], weight = inputs[1];
+    auto r = weight->getDims()[2];
+    auto s = weight->getDims()[3];
+    auto g = input->getDims()[1] / weight->getDims()[1];
+    attr["dilations"] =
+        "[" + std::to_string(dh) + "," + std::to_string(dw) + "]"; // "[1, 1]";
+    attr["group"] = std::to_string(g);                             // "1";
+    attr["kernel_shape"] =
+        "[" + std::to_string(r) + "," + std::to_string(s) + "]"; // "[1, 1]";
+    std::string pad = std::to_string(ph) + "," + std::to_string(pw);
+    attr["pads"] = "[" + pad + "," + pad + "]"; // "[0, 0, 0, 0]";
+    attr["strides"] =
+        "[" + std::to_string(sh) + "," + std::to_string(sw) + "]"; // "[1, 1]";
+
+    if (bias != nullptr) {
+        Dim dim = bias->getDims();
+        std::string name = "bias_" + std::to_string(getGuid());
+        extra[name] = dim;
+    }
+
+    if (act == ActType::Relu) {
+        attr["act"] = "Relu";
+    } else {
+        if (act == ActType::Sigmoid) {
+            attr["act"] = "Sigmoid";
+        }
+    }
+}
+
+void MatmulOp::getOptypeAttr(
+    std::string &optype, std::map<std::string, std::string> &attr,
+    std::map<std::string, std::vector<int>> &extra) const {
+    optype = "MatMul";
+
+    if (bias != nullptr) {
+        Dim dim = bias->getDims();
+        std::string name = "bias_" + std::to_string(getGuid());
+        extra[name] = dim;
+    }
+}
+
+void ConvTransOp::getOptypeAttr(
+    std::string &optype, std::map<std::string, std::string> &attr,
+    std::map<std::string, std::vector<int>> &extra) const {
+    // TODO
+}
+
+void G2BMMOp::getOptypeAttr(
+    std::string &optype, std::map<std::string, std::string> &attr,
+    std::map<std::string, std::vector<int>> &extra) const {
+    // TODO
+}
+
+void GBMMLOp::getOptypeAttr(
+    std::string &optype, std::map<std::string, std::string> &attr,
+    std::map<std::string, std::vector<int>> &extra) const {
+    // TODO
+}
+
+void PadOp::getOptypeAttr(
+    std::string &optype, std::map<std::string, std::string> &attr,
+    std::map<std::string, std::vector<int>> &extra) const {
+    optype = "Pad";
+    attr["mode"] = "constant";
+
+    std::vector<int> pads;
+    for (auto x : begin)
+        pads.emplace_back(x);
+    for (auto x : end)
+        pads.emplace_back(x);
+    std::string name = "pads_" + std::to_string(getGuid());
+    extra[name] = pads;
+}
+
+void SliceOp::getOptypeAttr(
+    std::string &optype, std::map<std::string, std::string> &attr,
+    std::map<std::string, std::vector<int>> &extra) const {
+    optype = "Slice";
+
+    std::string guid_str = std::to_string(getGuid());
+    extra["starts_" + guid_str] = begin;
+    extra["ends_" + guid_str] = end;
+}
+
+void ConcatOp::getOptypeAttr(
+    std::string &optype, std::map<std::string, std::string> &attr,
+    std::map<std::string, std::vector<int>> &extra) const {
+    optype = "Concat";
+    attr["axis"] = std::to_string(dim);
+}
+
+void SplitOp::getOptypeAttr(
+    std::string &optype, std::map<std::string, std::string> &attr,
+    std::map<std::string, std::vector<int>> &extra) const {
+    optype = "Split";
+    attr["axis"] = std::to_string(dim);
+
+    std::string name = "split_" + std::to_string(getGuid());
+    extra[name] = sizes;
+}
+
+void TransposeOp::getOptypeAttr(
+    std::string &optype, std::map<std::string, std::string> &attr,
+    std::map<std::string, std::vector<int>> &extra) const {
+    // TODO
+}
+
+void ExtendOp::getOptypeAttr(
+    std::string &optype, std::map<std::string, std::string> &attr,
+    std::map<std::string, std::vector<int>> &extra) const {
+    optype = "Extend";
+    // TODO: attributes
+}
+
+void BatchNormOp::getOptypeAttr(
+    std::string &optype, std::map<std::string, std::string> &attr,
+    std::map<std::string, std::vector<int>> &extra) const {
+    optype = "BatchNormalization";
+    attr["epsilon"] = std::to_string(epsilon);
+    attr["momentum"] = std::to_string(momentum);
+
+    if (scale != nullptr) {
+        Dim dim = scale->getDims();
+        std::string name = "scale_" + std::to_string(getGuid());
+        extra[name] = dim;
+    }
+    if (bias != nullptr) {
+        Dim dim = bias->getDims();
+        std::string name = "bias_" + std::to_string(getGuid());
+        extra[name] = dim;
+    }
+    if (mean != nullptr) {
+        Dim dim = mean->getDims();
+        std::string name = "mean_" + std::to_string(getGuid());
+        extra[name] = dim;
+    }
+    if (var != nullptr) {
+        Dim dim = var->getDims();
+        std::string name = "var_" + std::to_string(getGuid());
+        extra[name] = dim;
+    }
+}
+
+void MaxPoolOp::getOptypeAttr(
+    std::string &optype, std::map<std::string, std::string> &attr,
+    std::map<std::string, std::vector<int>> &extra) const {
+    optype = "MaxPool";
+    attr["auto_pad"] = "NOTSET";
+    attr["dilations"] =
+        "[" + std::to_string(dh) + "," + std::to_string(dw) + "]";
+    attr["kernel_shape"] =
+        "[" + std::to_string(kh) + "," + std::to_string(kw) + "]";
+    std::string pad = std::to_string(ph) + "," + std::to_string(pw);
+    attr["pads"] = "[" + pad + "," + pad + "]"; // "[0, 0, 0, 0]";
+    attr["strides"] = "[" + std::to_string(sh) + "," + std::to_string(sw) + "]";
+}
+
+void AvgPoolOp::getOptypeAttr(
+    std::string &optype, std::map<std::string, std::string> &attr,
+    std::map<std::string, std::vector<int>> &extra) const {
+    optype = "AveragePool";
+    attr["auto_pad"] = "NOTSET";
+    attr["count_include_pad"] = "0";
+    attr["kernel_shape"] =
+        "[" + std::to_string(kh) + "," + std::to_string(kw) + "]";
+    std::string pad = std::to_string(ph) + "," + std::to_string(pw);
+    attr["pads"] = "[" + pad + "," + pad + "]"; // "[0, 0, 0, 0]";
+    attr["strides"] = "[" + std::to_string(sh) + "," + std::to_string(sw) + "]";
+}
+
+void AddOp::getOptypeAttr(
+    std::string &optype, std::map<std::string, std::string> &attr,
+    std::map<std::string, std::vector<int>> &extra) const {
+    optype = "Add";
+}
+
+void SubOp::getOptypeAttr(
+    std::string &optype, std::map<std::string, std::string> &attr,
+    std::map<std::string, std::vector<int>> &extra) const {
+    optype = "Sub";
+}
+
+void MulOp::getOptypeAttr(
+    std::string &optype, std::map<std::string, std::string> &attr,
+    std::map<std::string, std::vector<int>> &extra) const {
+    optype = "Mul";
+}
+
+void DivOp::getOptypeAttr(
+    std::string &optype, std::map<std::string, std::string> &attr,
+    std::map<std::string, std::vector<int>> &extra) const {
+    optype = "Div";
+}
+
+void PowOp::getOptypeAttr(
+    std::string &optype, std::map<std::string, std::string> &attr,
+    std::map<std::string, std::vector<int>> &extra) const {
+    optype = "Pow"; // TODO: add input as power if required
+}
+
+void GatherOp::getOptypeAttr(
+    std::string &optype, std::map<std::string, std::string> &attr,
+    std::map<std::string, std::vector<int>> &extra) const {
+    optype = "Gather";
+    attr["axis"] = std::to_string(axis);
+}
+
+void ReduceMeanOp::getOptypeAttr(
+    std::string &optype, std::map<std::string, std::string> &attr,
+    std::map<std::string, std::vector<int>> &extra) const {
+    optype = "ReduceMean";
+    attr["axes"] = std::to_string(axis);
+    attr["keepdims"] = "1";
+}
+
+void ReshapeOp::getOptypeAttr(
+    std::string &optype, std::map<std::string, std::string> &attr,
+    std::map<std::string, std::vector<int>> &extra) const {
+    optype = "Reshape";
+    // TODO: compute or store the shape
+}
+
+void IdentityOp::getOptypeAttr(
+    std::string &optype, std::map<std::string, std::string> &attr,
+    std::map<std::string, std::vector<int>> &extra) const {
+    optype = "Identity";
+}
+
+void SoftmaxOp::getOptypeAttr(
+    std::string &optype, std::map<std::string, std::string> &attr,
+    std::map<std::string, std::vector<int>> &extra) const {
+    optype = "Softmax";
+    attr["axis"] = std::to_string(axis);
+}
+
+void TanhOp::getOptypeAttr(
+    std::string &optype, std::map<std::string, std::string> &attr,
+    std::map<std::string, std::vector<int>> &extra) const {
+    // TODO
+    optype = "Tanh";
+}
+
+void ActivationOp::getOptypeAttr(
+    std::string &optype, std::map<std::string, std::string> &attr,
+    std::map<std::string, std::vector<int>> &extra) const {
+    optype = "None";
+    if (actType == Operator::ActType::Relu) {
+        optype = "Relu";
+    }
+    if (actType == Operator::ActType::Sigmoid) {
+        optype = "Sigmoid";
+    }
+}
+
+void MemBoundOp::getOptypeAttr(
+    std::string &optype, std::map<std::string, std::string> &attr,
+    std::map<std::string, std::vector<int>> &extra) const {
+    // TODO
 }
 
 } // end of namespace tpm

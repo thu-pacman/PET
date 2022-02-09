@@ -30,6 +30,8 @@ class GraphBase {
 
     void updateConnection();
     void removeOps(OpVec &ops);
+
+    bool exportOnnx(const char *path);
 };
 
 class Graph : public GraphBase {
@@ -49,15 +51,42 @@ class Graph : public GraphBase {
     Operator *conv(Tensor *input, Tensor *weight, ConvOp::PaddingMode pm,
                    int sh = 1, int sw = 1, int dh = 1, int dw = 1,
                    Tensor *bias = nullptr);
+    // conv trans op
+    // bias is not part of the graph connections
+    Operator *convTrans(Tensor *input, Tensor *weight, Tensor *output, int ph,
+                        int pw, int sh = 1, int sw = 1, int dh = 1, int dw = 1,
+                        Tensor *bias = nullptr);
+    Operator *convTrans(Tensor *input, Tensor *weight, int ph, int pw,
+                        int sh = 1, int sw = 1, int dh = 1, int dw = 1,
+                        Tensor *bias = nullptr);
+    Operator *convTrans(Tensor *input, Tensor *weight, Tensor *output,
+                        ConvTransOp::PaddingMode pm, int sh = 1, int sw = 1,
+                        int dh = 1, int dw = 1, Tensor *bias = nullptr);
+    Operator *convTrans(Tensor *input, Tensor *weight,
+                        ConvTransOp::PaddingMode pm, int sh = 1, int sw = 1,
+                        int dh = 1, int dw = 1, Tensor *bias = nullptr);
     // matmul op
     // bias is not part of the graph connections
     Operator *matmul(Tensor *A, Tensor *B, Tensor *C, bool transA = false,
                      bool transB = false, Tensor *bias = nullptr);
     Operator *matmul(Tensor *A, Tensor *B, bool transA = false,
                      bool transB = false, Tensor *bias = nullptr);
+    // g2bmm op
+    // bias is not part of the graph connections
+    Operator *g2bmm(Tensor *A, Tensor *B, Tensor *C, int width, int dilation,
+                    Tensor *bias = nullptr);
+    Operator *g2bmm(Tensor *A, Tensor *B, int width, int dilation,
+                    Tensor *bias = nullptr);
+    // gbmm-like op
+    // bias is not part of the graph connections
+    Operator *gbmml(Tensor *A, Tensor *B, Tensor *C, int dilation,
+                    Tensor *bias = nullptr);
+    Operator *gbmml(Tensor *A, Tensor *B, int dilation, Tensor *bias = nullptr);
+    // pad op
     Operator *pad(Tensor *input, Tensor *output, const Dim &begin,
                   const Dim &end);
     Operator *pad(Tensor *input, const Dim &begin, const Dim &end);
+    // slice op
     Operator *slice(Tensor *input, Tensor *output, const Dim &begin,
                     const Dim &end);
     Operator *slice(Tensor *input, const Dim &begin, const Dim &end);
@@ -135,6 +164,12 @@ class Graph : public GraphBase {
     // softmax op
     Operator *softmax(Tensor *input, Tensor *output, int axis);
     Operator *softmax(Tensor *input, int axis);
+    // tanh op
+    Operator *tanh(Tensor *input, Tensor *output);
+    Operator *tanh(Tensor *input);
+    // membound op
+    Operator *membound(TensorVec &inputs, TensorVec &outputs, nnet::Expr expr,
+                       double exec_time);
 
     void setInputs(TensorVec inputs_);
     void setOutputs(TensorVec outputs_);
