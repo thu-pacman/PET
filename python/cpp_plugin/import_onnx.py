@@ -187,6 +187,31 @@ def import_onnx(g: Graph, net: str):
                     attrs["dilations"][0], attrs["dilations"][1],
                     None if len(node.input) == 2 else ts[node.input[2]])
 
+        elif node.op_type == 'ConvTranspose':
+            attrs = _parse_attribute(node.attribute, {
+                "auto_pad": "NOTSET",
+                "dilations": [1, 1],
+                "pads": [0, 0, 0, 0],
+                "strides": [1, 1]})
+            assert len(node.input) == 2 or len(node.input) == 3
+            assert len(node.output) == 1
+            assert attrs["auto_pad"] == "NOTSET"
+            assert len(attrs["pads"]) == 4
+            assert len(attrs["strides"]) == 2
+            assert len(attrs["dilations"]) == 2
+            assert attrs["pads"][0] == attrs["pads"][2]
+            assert attrs["pads"][1] == attrs["pads"][3]
+            oph, opw = 0, 0
+            if "output_padding" in attrs:
+                oph, opw = attrs["output_padding"][0], attrs["output_padding"][1]
+                assert attrs["output_padding"][0] == attrs["output_padding"][1]
+            g.convTrans(ts[node.input[0]], ts[node.input[1]], ts[node.output[0]],
+                        attrs["pads"][0], attrs["pads"][1],
+                        attrs["strides"][0], attrs["strides"][1],
+                        attrs["dilations"][0], attrs["dilations"][1],
+                        oph, opw,
+                        None if len(node.input) == 2 else ts[node.input[2]])
+
         elif node.op_type == 'Concat':
             assert len(node.output) == 1
             attrs = _parse_attribute(node.attribute, {})
@@ -364,6 +389,11 @@ def import_onnx(g: Graph, net: str):
             assert len(node.output) == 1
             g.relu(ts[node.input[0]], ts[node.output[0]])
 
+        elif node.op_type == 'Tanh':
+            assert len(node.input) == 1
+            assert len(node.output) == 1
+            g.tanh(ts[node.input[0]], ts[node.output[0]])
+
         elif node.op_type == 'Sigmoid':
             assert len(node.input) == 1
             assert len(node.output) == 1
@@ -387,7 +417,7 @@ def import_onnx(g: Graph, net: str):
                     Perm([PermItem(x) for x in attrs["perm"]]), 0)
 
         elif node.op_type == 'Unsqueeze':
-            assert len(node.input) == 1
+            assert len(node.input) == 2
             assert len(node.output) == 1
             g.reshape(ts[node.input[0]], ts[node.output[0]])
             
@@ -409,6 +439,21 @@ def import_onnx(g: Graph, net: str):
             axis = attrs['axis']
             split = attrs['split']
             g.split(ts[node.input[0]], [ts[t] for t in node.output], axis, split)
+
+        elif node.op_type == "Slice":
+            attrs = _parse_attribute(node.attribute, {})
+            assert len(node.input) == 4
+            assert len(node.output) == 1
+            g.slice(ts[node.input[0]], ts[node.output[0]],
+                    ts[node.input[1]], ts[node.input[2]])
+
+        elif node.op_type == "Resize":
+            attrs = _parse_attribute(node.attribute, {})
+            assert len(node.input) == 4
+            assert len(node.output) == 1
+            roi = ts[node.input[1]] if node.input[1] != '' else g.tensor(
+                [], 'FLOAT')
+            g.resize(ts[node.input[0]], roi, ts[node.output[0]])
 
         else:
             assert False, "Unsupported op: " + node.op_type

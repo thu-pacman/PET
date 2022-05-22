@@ -427,6 +427,7 @@ double ConvOp::perf(PerfEngine *pe, int rounds, int warmupRounds) {
                 convDesc, ALGOS[i], wsData, wsSize, &beta, outDesc, outData);
             if (stat != CUDNN_STATUS_SUCCESS) {
                 // checkCudnnError(stat);
+                // Do not checkCudnnError since not all algorithms are supported
                 durtime = INFINITY;
                 break;
             }
@@ -480,6 +481,7 @@ double ConvOp::perf(PerfEngine *pe, int rounds, int warmupRounds) {
                 biasDesc, biasData, actDesc, outDesc, outData);
             if (stat != CUDNN_STATUS_SUCCESS) {
                 // checkCudnnError(stat);
+                // Do not checkCudnnError since not all algorithms are supported
                 durtime_fuse = INFINITY;
                 break;
             }
@@ -756,9 +758,9 @@ double MatmulOp::perf(PerfEngine *pe, int rounds, int warmupRounds) {
     dA = pe->getMatA();
     dB = pe->getMatB();
     dC = pe->getMatC();
-    auto opA = transA ? CUBLAS_OP_N : CUBLAS_OP_T; // N = col major = transpose
-    auto opB = transB ? CUBLAS_OP_N : CUBLAS_OP_T;
-    const int lda = transA ? k : m, ldb = transB ? n : k, ldc = n;
+    auto opA = transA ? CUBLAS_OP_T : CUBLAS_OP_N; // BLAS_N = col major
+    auto opB = transB ? CUBLAS_OP_T : CUBLAS_OP_N;
+    const int lda = transA ? m : k, ldb = transB ? k : n, ldc = n;
     const float alpha = 1.f, beta = 0.f;
 
     MatmulResult best;
@@ -768,23 +770,25 @@ double MatmulOp::perf(PerfEngine *pe, int rounds, int warmupRounds) {
     for (int i = -1; i < N_ALGO; i++) {
         double durtime = 0.0;
         for (int j = 0; j < rounds + warmupRounds; ++j) {
-            checkCudaError(cudaDeviceSynchronize());
-            beg = ch::high_resolution_clock::now();
+            if (j == warmupRounds) {
+                checkCudaError(cudaDeviceSynchronize());
+                beg = ch::high_resolution_clock::now();
+            }
             auto stat = cublasGemmStridedBatchedEx(
                 pe->cublasHandle(), opB, opA, n, m, k, &alpha, dB, CUDA_R_32F,
                 ldb, k * n, dA, CUDA_R_32F, lda, m * k, &beta, dC, CUDA_R_32F,
                 ldc, m * n, b, CUDA_R_32F, ALGOS[i]);
-            checkCudaError(cudaDeviceSynchronize());
-            end = ch::high_resolution_clock::now();
             if (stat != CUBLAS_STATUS_SUCCESS) {
                 durtime = INFINITY;
                 break;
             }
-            if (j >= warmupRounds) {
-                durtime +=
-                    ch::duration_cast<ch::duration<double>>(end - beg).count() *
-                    1000; // ms
-            }
+        }
+        checkCudaError(cudaDeviceSynchronize());
+        end = ch::high_resolution_clock::now();
+        if (durtime == 0) {
+            durtime =
+                ch::duration_cast<ch::duration<double>>(end - beg).count() *
+                1000; // ms
         }
         durtime /= rounds;
         if (durtime < best.time) {
@@ -796,24 +800,25 @@ double MatmulOp::perf(PerfEngine *pe, int rounds, int warmupRounds) {
         for (int i = 0; i < N_ALGO; i++) {
             double durtime = 0.0;
             for (int j = 0; j < rounds + warmupRounds; ++j) {
-                checkCudaError(cudaDeviceSynchronize());
-                beg = ch::high_resolution_clock::now();
+                if (j == warmupRounds) {
+                    checkCudaError(cudaDeviceSynchronize());
+                    beg = ch::high_resolution_clock::now();
+                }
                 auto stat = cublasGemmEx(pe->cublasHandle(), opB, opA, n, m, k,
                                          &alpha, dB, CUDA_R_32F, ldb, dA,
                                          CUDA_R_32F, lda, &beta, dC, CUDA_R_32F,
                                          ldc, CUDA_R_32F, ALGOS[i]);
-                checkCudaError(cudaDeviceSynchronize());
-                end = ch::high_resolution_clock::now();
                 if (stat != CUBLAS_STATUS_SUCCESS) {
                     durtime = INFINITY;
                     break;
                 }
-                if (j >= warmupRounds) {
-                    durtime +=
-                        ch::duration_cast<ch::duration<double>>(end - beg)
-                            .count() *
-                        1000; // ms
-                }
+            }
+            checkCudaError(cudaDeviceSynchronize());
+            end = ch::high_resolution_clock::now();
+            if (durtime == 0) {
+                durtime =
+                    ch::duration_cast<ch::duration<double>>(end - beg).count() *
+                    1000; // ms
             }
             durtime /= rounds;
             if (durtime < best.time) {
@@ -836,10 +841,11 @@ void MatmulOp::inferSplittingPoints() {
 }
 
 ConvTransOp::ConvTransOp(Tensor *input, Tensor *weight, Tensor *output, int ph,
-                         int pw, int sh, int sw, int dh, int dw, Tensor *bias,
-                         ActType act)
+                         int pw, int sh, int sw, int dh, int dw, int oph,
+                         int opw, Tensor *bias, ActType act)
     : Operator(ConvTrans, {input, weight}, {output}), ph(ph), pw(pw), sh(sh),
-      sw(sw), dh(dh), dw(dw), bias(bias), act(act), padding(Other) {
+      sw(sw), dh(dh), dw(dw), oph(oph), opw(opw), bias(bias), act(act),
+      padding(Other) {
     weight->setType(Tensor::Weight);
     assert(checkValid({input, weight}));
     computeShape();
@@ -849,9 +855,10 @@ ConvTransOp::ConvTransOp(Tensor *input, Tensor *weight, Tensor *output, int ph,
 }
 
 ConvTransOp::ConvTransOp(Tensor *input, Tensor *weight, int ph, int pw, int sh,
-                         int sw, int dh, int dw, Tensor *bias, ActType act)
+                         int sw, int dh, int dw, int oph, int opw, Tensor *bias,
+                         ActType act)
     : Operator(ConvTrans, {input, weight}, {}), ph(ph), pw(pw), sh(sh), sw(sw),
-      dh(dh), dw(dw), bias(bias), act(act), padding(Other) {
+      dh(dh), dw(dw), oph(oph), opw(opw), bias(bias), act(act), padding(Other) {
     weight->setType(Tensor::Weight);
     assert(checkValid({input, weight}));
     outputs.emplace_back(new Tensor());
@@ -861,17 +868,17 @@ ConvTransOp::ConvTransOp(Tensor *input, Tensor *weight, int ph, int pw, int sh,
 }
 
 ConvTransOp::ConvTransOp(int ph, int pw, int sh, int sw, int dh, int dw,
-                         Tensor *bias, ActType act)
+                         int oph, int opw, Tensor *bias, ActType act)
     : Operator(ConvTrans), ph(ph), pw(pw), sh(sh), sw(sw), dh(dh), dw(dw),
-      bias(bias), act(act), padding(Other) {
+      oph(oph), opw(opw), bias(bias), act(act), padding(Other) {
     initHash();
 }
 
 ConvTransOp::ConvTransOp(Tensor *input, Tensor *weight, Tensor *output,
                          PaddingMode pm, int sh, int sw, int dh, int dw,
-                         Tensor *bias, ActType act)
+                         int oph, int opw, Tensor *bias, ActType act)
     : Operator(ConvTrans, {input, weight}, {output}), sh(sh), sw(sw), dh(dh),
-      dw(dw), bias(bias), act(act), padding(pm) {
+      dw(dw), oph(oph), opw(opw), bias(bias), act(act), padding(pm) {
     assert(pm != Other);
     weight->setType(Tensor::Weight);
     assert(checkValid({input, weight}));
@@ -881,9 +888,10 @@ ConvTransOp::ConvTransOp(Tensor *input, Tensor *weight, Tensor *output,
     initHash();
 }
 ConvTransOp::ConvTransOp(Tensor *input, Tensor *weight, PaddingMode pm, int sh,
-                         int sw, int dh, int dw, Tensor *bias, ActType act)
+                         int sw, int dh, int dw, int oph, int opw, Tensor *bias,
+                         ActType act)
     : Operator(ConvTrans, {input, weight}, {}), sh(sh), sw(sw), dh(dh), dw(dw),
-      bias(bias), act(act), padding(pm) {
+      oph(oph), opw(opw), bias(bias), act(act), padding(pm) {
     assert(pm != Other);
     weight->setType(Tensor::Weight);
     assert(checkValid({input, weight}));
@@ -892,16 +900,17 @@ ConvTransOp::ConvTransOp(Tensor *input, Tensor *weight, PaddingMode pm, int sh,
     initHash();
 }
 ConvTransOp::ConvTransOp(PaddingMode pm, int sh, int sw, int dh, int dw,
-                         Tensor *bias, ActType act)
-    : Operator(ConvTrans), sh(sh), sw(sw), dh(dh), dw(dw), bias(bias), act(act),
-      padding(pm) {
+                         int oph, int opw, Tensor *bias, ActType act)
+    : Operator(ConvTrans), sh(sh), sw(sw), dh(dh), dw(dw), oph(oph), opw(opw),
+      bias(bias), act(act), padding(pm) {
     // assert(pm != Other);
     initHash();
 }
 
 ConvTransOp::ConvTransOp(const ConvTransOp &rhs)
     : Operator(rhs), ph(rhs.ph), pw(rhs.pw), sh(rhs.sh), sw(rhs.sw), dh(rhs.dh),
-      dw(rhs.dw), bias(rhs.bias), act(rhs.act), padding(rhs.padding) {}
+      dw(rhs.dw), oph(rhs.oph), opw(rhs.opw), bias(rhs.bias), act(rhs.act),
+      padding(rhs.padding) {}
 
 void ConvTransOp::initHash() {
     hash = type;
@@ -914,58 +923,58 @@ void ConvTransOp::initHash() {
     hash = hashAppend(hash, sw);
     hash = hashAppend(hash, dh);
     hash = hashAppend(hash, dw);
+    hash = hashAppend(hash, oph);
+    hash = hashAppend(hash, opw);
     hash = hashPack(hash);
 }
 
+// input {n, h, w, f} weight {r, s, f, c} output {n, h, w, c}
 Tensor *ConvTransOp::compute() {
     if (outputs[0]->isComputed())
         return outputs[0];
 
     auto input = inputs[0], weight = inputs[1], output = outputs[0];
     auto n = input->getDims()[0];
-    auto c = input->getDims()[1];
-    auto h = input->getDims()[2];
-    auto w = input->getDims()[3];
-    auto f = weight->getDims()[0];
-    auto cpg = weight->getDims()[1];
-    auto r = weight->getDims()[2];
-    auto s = weight->getDims()[3];
-    // TODO: check correctness, group
-    auto g = c / cpg;
-    if (f % g != 0)
-        return nullptr;
+    auto h = input->getDims()[1];
+    auto w = input->getDims()[2];
+    auto f = input->getDims()[3];
+
+    auto r = weight->getDims()[0];
+    auto s = weight->getDims()[1];
+    auto cpg = weight->getDims()[3];
+
     output->dataMalloc();
     auto outDim = output->getDims();
     auto oh = outDim[2], ow = outDim[3];
-    auto iptr = input->getDataPtr(), wptr = weight->getDataPtr(),
-         optr = output->getDataPtr();
     for (int nn = 0; nn < n; nn++) {
 #pragma omp parallel for
-        for (int ff = 0; ff < f; ff++) {
+        for (int cc = 0; cc < cpg; cc++) {
             for (int hh = 0; hh < oh; hh++)
                 for (int ww = 0; ww < ow; ww++) {
-                    int gidx = ff / (f / g);
                     VType val = 0;
-                    for (int cc = 0; cc < cpg; cc++)
+                    for (int ff = 0; ff < f; ff++)
                         for (int rr = 0; rr < r; rr++)
                             for (int ss = 0; ss < s; ss++) {
-                                int posH = (hh + ph - rr * dh) / sh;
-                                int posW = (ww + pw - ss * dw) / sw;
-                                if (posH < 0 || posH >= h || posW < 0 ||
-                                    posW >= w)
+                                int ah = ((h + 2 * ph - r) % sh);
+                                int aw = ((w + 2 * pw - s) % sw);
+                                if (r - ah < rr || s - aw < ss)
                                     continue;
-                                auto iOffset =
-                                         posW +
-                                         w * (posH +
-                                              h * ((cc + gidx * cpg) + c * nn)),
-                                     wOffset =
-                                         ss + s * (rr + r * (cc + cpg * ff));
-                                auto inputVal = iptr[iOffset],
-                                     weightVal = wptr[wOffset];
-                                val += weightVal * inputVal;
+                                int posH = hh + rr * dh - (r - ph - 1);
+                                int posW = ww + ss * dw - (s - pw - 1);
+                                if (posH % sh == 0 && posW % sw == 0) {
+                                    posH /= sh;
+                                    posW /= sw;
+                                    if (posH < 0 || posH >= h || posW < 0 ||
+                                        posW >= w)
+                                        continue;
+                                    auto inputVal =
+                                        input->getData({nn, posH, posW, ff});
+                                    auto weightVal = weight->getData(
+                                        {(r - 1 - rr), (s - 1 - ss), ff, cc});
+                                    val += weightVal * inputVal;
+                                }
                             }
-                    auto oOffset = ww + ow * (hh + oh * (ff + f * nn));
-                    optr[oOffset] = val;
+                    output->setData({nn, hh, ww, cc}, val);
                 }
         }
     }
@@ -973,6 +982,7 @@ Tensor *ConvTransOp::compute() {
     return output;
 }
 
+// input {n, h, w, f} weight {r, s, f, c} output {n, h, w, c}
 std::pair<std::vector<DimRange>, std::function<bool()>>
 ConvTransOp::compute(DimRange dr) {
     if (dr.notValid())
@@ -981,14 +991,12 @@ ConvTransOp::compute(DimRange dr) {
         return {{DimRange::getEmpty(), DimRange::getEmpty()},
                 []() { return true; }};
     auto input = inputs[0], weight = inputs[1];
-    auto c = input->getDims()[1];
-    auto f = weight->getDims()[0];
-    auto cpg = weight->getDims()[1];
-    auto r = weight->getDims()[2];
-    auto s = weight->getDims()[3];
-    auto g = c / cpg;
-    if (f % g != 0)
-        return {};
+    auto h = input->getDims()[1];
+    auto w = input->getDims()[2];
+    auto f = input->getDims()[3];
+    auto r = weight->getDims()[0];
+    auto s = weight->getDims()[1];
+    auto cpg = weight->getDims()[3];
     auto outDim = outputs[0]->getDims();
     // TODO: call gpu compute
     if (!dr.isSinglePos()) {
@@ -997,57 +1005,58 @@ ConvTransOp::compute(DimRange dr) {
     } else {
         if (dr.getBegin().size() != 4 /*|| dr.getEnd().size() != 4*/)
             return {};
-        return {
-            {DimRange::getAllPos(), DimRange::getAllPos()},
-            [this, f, g, cpg, r, s, dr]() {
-                auto &pos = dr.getBegin();
-                auto nn = pos[0], ff = pos[1], hh = pos[2], ww = pos[3];
-                auto input = inputs[0], weight = inputs[1], output = outputs[0];
-                int gidx = ff / (f / g);
-                VType val = 0;
-                for (int cc = 0; cc < cpg; cc++)
-                    for (int rr = 0; rr < r; rr++)
-                        for (int ss = 0; ss < s; ss++) {
-                            int posH = (hh + ph - rr * dh) / sh;
-                            int posW = (ww + pw - ss * dw) / sw;
-                            VType weightVal = weight->getData({ff, cc, rr, ss});
-                            VType inputVal = input->getData(
-                                {nn, cc + gidx * cpg, posH, posW});
-                            val += weightVal * inputVal;
-                        }
-                output->dataMalloc();
-                return output->setData({nn, ff, hh, ww}, val);
-            }};
+        return {{DimRange::getAllPos(), DimRange::getAllPos()},
+                [this, h, w, f, r, s, cpg, dr]() {
+                    auto &pos = dr.getBegin();
+                    auto nn = pos[0], hh = pos[1], ww = pos[2], cc = pos[3];
+                    auto input = inputs[0], weight = inputs[1],
+                         output = outputs[0];
+                    VType val = 0;
+                    for (int ff = 0; ff < f; ff++)
+                        for (int rr = 0; rr < r; rr++)
+                            for (int ss = 0; ss < s; ss++) {
+                                int ah = ((h + 2 * ph - r) % sh);
+                                int aw = ((w + 2 * pw - s) % sw);
+                                if (r - ah < rr || s - aw < ss) {
+                                    continue;
+                                }
+                                int posH = hh + rr * dh - (r - ph - 1);
+                                int posW = ww + ss * dw - (s - pw - 1);
+                                if (posH % sh == 0 && posW % sw == 0) {
+                                    posH /= sh;
+                                    posW /= sw;
+                                    if (posH < 0 || posH >= h || posW < 0 ||
+                                        posW >= w) {
+                                        continue;
+                                    }
+                                    VType inputVal =
+                                        input->getData({nn, posH, posW, ff});
+                                    VType weightVal = weight->getData(
+                                        {(r - 1 - rr), (s - 1 - ss), ff, cc});
+                                    val += weightVal * inputVal;
+                                }
+                            }
+                    output->dataMalloc();
+                    return output->setData({nn, hh, ww, cc}, val);
+                }};
     }
 }
 
+// input {n, h, w, f} weight {r, s, f, c} output {n, h, w, c}
 Dim ConvTransOp::computeShape() {
     auto input = inputs[0], weight = inputs[1], output = outputs[0];
     auto n = input->getDims()[0];
     auto h = input->getDims()[1];
     auto w = input->getDims()[2];
-    [[maybe_unused]] auto f = weight->getDims()[0];
-    auto r = weight->getDims()[1];
-    auto s = weight->getDims()[2];
+    [[maybe_unused]] auto f = input->getDims()[3];
+    auto r = weight->getDims()[0];
+    auto s = weight->getDims()[1];
     auto c = weight->getDims()[3];
+    assert(f == weight->getDims()[2]);
     int on = n, oc = c;
     int oh = 0, ow = 0;
-    assert(f == input->getDims()[3]);
-    // Set padding size
-    if (padding == Other) {
-        oh = h * sh - ph * 2 + (r - sh) * dh;
-        ow = w * sw - pw * 2 + (s - sw) * dw;
-    } else if (padding == Same) {
-        oh = h * sh;
-        ow = w * sw;
-        ph = (h - oh * sh + (r - sh) * dh) / 2;
-        pw = (w - ow * sw + (s - sw) * dw) / 2;
-    } else if (padding == Valid) {
-        ph = 0;
-        pw = 0;
-        oh = h * sh - ph * 2 + (r - sh) * dh;
-        ow = w * sw - pw * 2 + (s - sw) * dw;
-    }
+    oh = (h - 1) * sh - 2 * ph + dh * (r - 1) + oph + 1;
+    ow = (w - 1) * sw - 2 * pw + dw * (s - 1) + opw + 1;
     auto ret = {on, oh, ow, oc};
     output->setDims(ret);
     output->setType(Tensor::Input);
@@ -1067,21 +1076,8 @@ Dim ConvTransOp::computeOutputPenalty(const Dim &p) {
     auto s = weight->getDims()[3];
     int on = n, oc = f;
     int oh = 0, ow = 0;
-    // Set padding size
-    if (padding == Other) {
-        oh = h * sh - ph * 2 + (r - sh) * dh;
-        ow = w * sw - pw * 2 + (s - sw) * dw;
-    } else if (padding == Same) {
-        oh = h * sh;
-        ow = w * sw;
-        ph = (h - oh * sh + (r - sh) * dh) / 2;
-        pw = (w - ow * sw + (s - sw) * dw) / 2;
-    } else if (padding == Valid) {
-        ph = 0;
-        pw = 0;
-        oh = h * sh - ph * 2 + (r - sh) * dh;
-        ow = w * sw - pw * 2 + (s - sw) * dw;
-    }
+    oh = (h - 1) * sh - 2 * ph + dh * (r - 1) + oph + 1;
+    ow = (w - 1) * sw - 2 * pw + dw * (s - 1) + opw + 1;
     auto outDim = output->getDims();
     return {on - outDim[0], oc - outDim[1], oh - outDim[2], ow - outDim[3]};
 }
@@ -1098,19 +1094,18 @@ void ConvTransOp::setPaddingMode() {
 }
 
 // TODO: check correctness
+// input {n, h, w, f} weight {r, s, f, c}
 bool ConvTransOp::checkValid(const TensorVec &inputs) {
     auto input = inputs[0], weight = inputs[1];
     assert(input != nullptr && weight != nullptr);
     // TODO: group trans_conv is not supported by now
-    assert(input->getDims()[3] == weight->getDims()[0]);
+    assert(input->getDims()[3] == weight->getDims()[2]);
     // TODO: dilated trans_conv is not supported by now
     assert(dh == 1 && dw == 1);
     if (input->getType() != Tensor::Input ||
         weight->getType() != Tensor::Weight)
         return false;
     if (input->getDims().size() != 4 || weight->getDims().size() != 4)
-        return false;
-    if (input->getDims()[3] % weight->getDims()[0] != 0)
         return false;
     return true;
 }
@@ -1128,13 +1123,13 @@ double ConvTransOp::perf(PerfEngine *pe, int rounds, int warmupRounds) {
 
     auto input = inputs[0], weight = inputs[1];
     auto n = input->getDims()[0] + pe->withPenalty() * input->getPenalty()[0];
-    auto f = input->getDims()[3] + pe->withPenalty() * input->getPenalty()[1];
-    auto h = input->getDims()[1] + pe->withPenalty() * input->getPenalty()[2];
-    auto w = input->getDims()[2] + pe->withPenalty() * input->getPenalty()[3];
+    auto h = input->getDims()[1] + pe->withPenalty() * input->getPenalty()[1];
+    auto w = input->getDims()[2] + pe->withPenalty() * input->getPenalty()[2];
+    auto f = input->getDims()[3] + pe->withPenalty() * input->getPenalty()[3];
+    auto r = weight->getDims()[0];
+    auto s = weight->getDims()[1];
     auto c = weight->getDims()[3];
     auto cpg = weight->getDims()[3];
-    auto r = weight->getDims()[1];
-    auto s = weight->getDims()[2];
     // FIXME: group cannot be inferred from input and weight for convTrans
     auto g = c / cpg;
     assert(g == 1);
@@ -1350,7 +1345,12 @@ G2BMMOp::G2BMMOp(int width, int dilation, Tensor *bias, ActType act)
 
 void G2BMMOp::initHash() {
     hash = type;
+    const auto &[b, m, k, width, dilation] = getArgs();
+    hash = hashAppend(hash, b);
+    hash = hashAppend(hash, m);
+    hash = hashAppend(hash, k);
     hash = hashAppend(hash, width);
+    hash = hashAppend(hash, dilation);
     hash = hashPack(hash);
 }
 
@@ -1483,6 +1483,12 @@ GBMMLOp::GBMMLOp(int dilation, Tensor *bias, ActType act)
 
 void GBMMLOp::initHash() {
     hash = type;
+    const auto &[b, m, w, n, dilation] = getArgs();
+    hash = hashAppend(hash, b);
+    hash = hashAppend(hash, m);
+    hash = hashAppend(hash, w);
+    hash = hashAppend(hash, n);
+    hash = hashAppend(hash, dilation);
     hash = hashPack(hash);
 }
 
@@ -2381,7 +2387,7 @@ double TransposeOp::perf(PerfEngine *pe, int rounds, int warmupRounds) {
                inputs[0]->getOutputOf()->getType() == Transpose) {
         return 0;
     } else {
-        return inputs[0]->size() * sizeof(float) * 2 / (400.0 * 1024 * 1024);
+        return inputs[0]->size() * sizeof(float) * 2 / (200.0 * 1024 * 1024);
         // Too large overhead
         // CodeEngine code_engine;
         // code_engine.genTransposeCompute(*this);
@@ -3033,6 +3039,8 @@ bool AddOp::checkValid(const TensorVec &tensors) {
         auto dmI = tensor->getDims();
         if (dmI.size() > dmO.size() ||
             !std::equal(dmI.rbegin(), dmI.rend(), dmO.rbegin())) {
+            dbg(dmI);
+            dbg(dmO);
             return false;
         }
     }
@@ -3479,30 +3487,6 @@ Dim SoftmaxOp::computeShape() {
     return dim;
 }
 
-TanhOp::TanhOp(Tensor *input) : Operator(Tanh, {input}, {}) {
-    outputs.emplace_back(new Tensor());
-    computeShape();
-    initHash();
-}
-
-void TanhOp::initHash() {
-    hash = type;
-    hash = hashPack(hash);
-}
-
-Tensor *TanhOp::compute() {
-    assert(false);
-    return nullptr;
-}
-
-std::pair<std::vector<DimRange>, std::function<bool()>>
-TanhOp::compute(DimRange dr) {
-    assert(false);
-    return {};
-}
-
-Dim TanhOp::computeShape() { return inputs[0]->getDims(); }
-
 IdentityOp::IdentityOp(Tensor *input) : Operator(Identity, {input}, {}) {
     outputs.emplace_back(new Tensor());
     computeShape();
@@ -3612,6 +3596,118 @@ void MemBoundOp::setWeight() {
         for (auto output : outputs)
             output->setType(Tensor::Weight);
     }
+}
+
+Tensor *MemBoundOp::compute() {
+    auto output = outputs[0];
+    output->dataMalloc();
+    std::unordered_map<std::string, nnet::Ref<std::vector<int>>> rangeInputs;
+    for (int i = 0, iEnd = inputs.size(); i < iEnd; i++) {
+        auto input = inputs[i];
+        auto data = nnet::make_ref<std::vector<int>>(input->size());
+        auto input_d = input->getDataPtr();
+        for (int j = 0, jEnd = input->size(); j < jEnd; j++) {
+            data->operator[](j) = input_d[j];
+        }
+        auto name = nnetInputs[i]->getName();
+        rangeInputs.insert({name, data});
+    }
+    nnet::RangeOp range = nnet::as<nnet::RangeOpNode>(expr);
+    const auto &rangeShape = range->getOutputShape();
+    const auto &outputShape = output->getDims();
+    // rangeShape and outputShape may extra dims of length 1.
+    // But their sizes should be the same.
+    assert((ssize_t)range->getOutputSize() == (ssize_t)output->size());
+    const ssize_t iEnd = range->getOutputSize();
+#pragma omp parallel for default(none)                                         \
+    shared(range, output, rangeShape, outputShape, rangeInputs)
+    for (ssize_t i = 0; i < iEnd; i++) {
+        std::vector<int> rangePos(range->getNumOutputDims(), 0);
+        std::vector<int> outputPos(outputShape.size(), 0);
+        ssize_t t = i;
+        for (int j = range->getNumOutputDims() - 1; 0 <= j; j--) {
+            int extent = rangeShape[j];
+            rangePos[j] = t % extent;
+            t /= extent;
+        }
+        t = i;
+        for (int j = outputShape.size() - 1; 0 <= j; j--) {
+            int extent = outputShape[j];
+            outputPos[j] = t % extent;
+            t /= extent;
+        }
+        auto vals = nnet::Interpreter(rangeInputs).interpret(range, {rangePos});
+        output->setData(outputPos, vals[0]);
+    }
+    output->setComputed();
+    return output;
+}
+
+std::pair<std::vector<DimRange>, std::function<bool()>>
+MemBoundOp::compute(DimRange dr) {
+    if (dr.notValid())
+        return {};
+    std::vector<DimRange> inDrs;
+    if (dr.isEmpty()) {
+        for (int i = 0, iEnd = inputs.size(); i < iEnd; i++) {
+            inDrs.emplace_back(DimRange::getEmpty());
+        }
+        return {inDrs, []() { return true; }};
+    }
+    for (int i = 0, iEnd = inputs.size(); i < iEnd; i++) {
+        inDrs.emplace_back(DimRange::getAllPos());
+    }
+    return {inDrs, [this, dr]() {
+                auto output = outputs[0];
+                std::unordered_map<std::string, nnet::Ref<std::vector<int>>>
+                    rangeInputs;
+                assert(inputs.size() == nnetInputs.size());
+                for (int i = 0, iEnd = inputs.size(); i < iEnd; i++) {
+                    auto input = inputs[i];
+                    auto data = nnet::make_ref<std::vector<int>>(input->size());
+                    auto input_d = input->getDataPtr();
+                    for (int j = 0, jEnd = input->size(); j < jEnd; j++) {
+                        data->operator[](j) = input_d[j];
+                    }
+                    auto name = nnetInputs[i]->getName();
+                    rangeInputs.insert({name, data});
+                }
+                nnet::RangeOp range = nnet::as<nnet::RangeOpNode>(expr);
+                auto &pos = dr.getBegin();
+                auto vals =
+                    nnet::Interpreter(rangeInputs).interpret(range, {pos});
+                output->dataMalloc();
+                return output->setData(pos, vals[0]);
+            }};
+}
+
+ResizeOp::ResizeOp(Tensor *input, Tensor *sizes)
+    : Operator(Resize, {input}, {}), sizes(sizes) {
+    outputs.emplace_back(new Tensor());
+    computeShape();
+    initHash();
+}
+
+void ResizeOp::initHash() {
+    hash = type;
+    hash = hashPack(hash);
+}
+
+Tensor *ResizeOp::compute() {
+    assert(false);
+    return nullptr;
+}
+
+std::pair<std::vector<DimRange>, std::function<bool()>>
+ResizeOp::compute(DimRange dr) {
+    assert(false);
+    return {};
+}
+
+Dim ResizeOp::computeShape() {
+    auto dim = sizes->getDims();
+    outputs[0]->setDims(dim);
+    return dim;
 }
 
 void ConvOp::getOptypeAttr(
@@ -3853,13 +3949,6 @@ void SoftmaxOp::getOptypeAttr(
     attr["axis"] = std::to_string(axis);
 }
 
-void TanhOp::getOptypeAttr(
-    std::string &optype, std::map<std::string, std::string> &attr,
-    std::map<std::string, std::vector<int>> &extra) const {
-    // TODO
-    optype = "Tanh";
-}
-
 void ActivationOp::getOptypeAttr(
     std::string &optype, std::map<std::string, std::string> &attr,
     std::map<std::string, std::vector<int>> &extra) const {
@@ -3873,6 +3962,12 @@ void ActivationOp::getOptypeAttr(
 }
 
 void MemBoundOp::getOptypeAttr(
+    std::string &optype, std::map<std::string, std::string> &attr,
+    std::map<std::string, std::vector<int>> &extra) const {
+    // TODO
+}
+
+void ResizeOp::getOptypeAttr(
     std::string &optype, std::map<std::string, std::string> &attr,
     std::map<std::string, std::vector<int>> &extra) const {
     // TODO

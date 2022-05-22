@@ -42,7 +42,7 @@ def gen_simple_op(input_tensors, input_dtypes, output_tensor, f, func_name, inpu
 
     func_code = "// %s -> %s:\n// %s\n%s" % (input_tensors, output_tensor, f, func_code)
 
-    ctx = tvm.gpu(0)
+    ctx = tvm.cuda(0)
     input_a = []
     for i, (shape, dtype) in enumerate(zip(input_tensors, input_dtypes)):
         a_np = np.random.uniform(size=shape).astype(dtype)

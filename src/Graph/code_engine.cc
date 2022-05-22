@@ -1,6 +1,6 @@
 #include "code_engine.h"
 #include "ffi.h"
-#include "nnet/visitor.h"
+#include "nnet/Visitor/AsTVMVisitor.h"
 #include "perf_engine.h"
 #include "transpose.h"
 #include <fstream>
@@ -17,6 +17,8 @@ std::string CodeEngine::actToStr(Operator::ActType act) {
         return "CUDNN_ACTIVATION_RELU";
     case Operator::Sigmoid:
         return "CUDNN_ACTIVATION_SIGMOID";
+    case Operator::Tanh:
+        return "CUDNN_ACTIVATION_TANH";
     default:
         assert(false);
     }
@@ -182,6 +184,14 @@ std::string CodeEngine::genCode(std::shared_ptr<SubGraph> &graph) {
 
     emit("");
     emit("// Compute");
+    emit("// Preprocess operators for weights");
+    for (auto it = opsRev.rbegin(); it != opsRev.rend(); it++) {
+        if ((*it)->getInputs().size() == 1 &&
+            (*it)->getInputs()[0]->getType() == Tensor::Weight) {
+            genCompute(**it);
+        }
+    }
+    emit("// Count time for other operators");
     emit("int warmup = 100, rounds = 1000;");
     emit("for (int i = 0; i < warmup + rounds; i++) {");
     shiftTab(1);
@@ -191,7 +201,10 @@ std::string CodeEngine::genCode(std::shared_ptr<SubGraph> &graph) {
     shiftTab(-1);
     emit("}");
     for (auto it = opsRev.rbegin(); it != opsRev.rend(); it++) {
-        genCompute(**it);
+        if ((*it)->getInputs().size() > 1 ||
+            (*it)->getInputs()[0]->getType() != Tensor::Weight) {
+            genCompute(**it);
+        }
     }
     shiftTab(-1);
     emit("}");
@@ -703,7 +716,7 @@ void CodeEngine::genDesc(const Operator &op) {
         genGBMMLDesc(static_cast<const GBMMLOp &>(op));
         break;
     case Operator::BatchNorm:
-        // FIXME: HACK
+        genBatchNormDesc(static_cast<const BatchNormOp &>(op));
         break;
     default:
         op.print();
@@ -773,7 +786,7 @@ void CodeEngine::genCompute(const Operator &op) {
         genGBMMLCompute(static_cast<const GBMMLOp &>(op));
         break;
     case Operator::BatchNorm:
-        // FIXME: HACK
+        genBatchNormCompute(static_cast<const BatchNormOp &>(op));
         break;
     default:
         op.print();
@@ -977,10 +990,10 @@ void CodeEngine::genConvTransCompute(const ConvTransOp &op) {
         std::string line = "";
         line += "checkCudnnError(cudnnConvolutionBackwardData(cudnn, ";
         line += "&" + alpha + ", ";
-        line += getTensorDescName(*op.getInputs()[0]) + ", ";
-        line += getVarName(*op.getInputs()[0]) + ", ";
         line += getFilterDescName(*op.getInputs()[1]) + ", ";
         line += getVarName(*op.getInputs()[1]) + ", ";
+        line += getTensorDescName(*op.getInputs()[0]) + ", ";
+        line += getVarName(*op.getInputs()[0]) + ", ";
         line += getDescName(op) + ", ";
         line += "(cudnnConvolutionBwdDataAlgo_t)" + std::to_string(algo) + ", ";
         line += "wsData, ";
@@ -1094,7 +1107,7 @@ void CodeEngine::genMatmulCompute(const MatmulOp &op) {
     auto m = op.getTransA() ? dimA[2] : dimA[1];
     auto n = op.getTransB() ? dimB[1] : dimB[2];
     auto k = op.getTransA() ? dimA[1] : dimA[2];
-    const int lda = op.getTransA() ? k : m, ldb = op.getTransB() ? n : k,
+    const int lda = op.getTransA() ? m : k, ldb = op.getTransB() ? k : n,
               ldc = n;
 
     std::string alpha = "alpha_" + std::to_string(op.getGuid());
@@ -1102,8 +1115,8 @@ void CodeEngine::genMatmulCompute(const MatmulOp &op) {
     emit("float " + alpha + " = 1.0f, " + beta + " = 0.0f;");
     std::string line = "";
     line += "cublasGemmStridedBatchedEx(cublas, ";
-    line += op.getTransB() ? "CUBLAS_OP_N, " : "CUBLAS_OP_T, "; // opB
-    line += op.getTransA() ? "CUBLAS_OP_N, " : "CUBLAS_OP_T, "; // opA
+    line += op.getTransB() ? "CUBLAS_OP_T, " : "CUBLAS_OP_N, "; // opB
+    line += op.getTransA() ? "CUBLAS_OP_T, " : "CUBLAS_OP_N, "; // opA
     line += std::to_string(n) + ", ";
     line += std::to_string(m) + ", ";
     line += std::to_string(k) + ", ";
@@ -1417,7 +1430,6 @@ void CodeEngine::genTransposeCompute(const TransposeOp &op) {
         transposeMap[&op].reset(new std::vector<const TransposeOp *>());
     }
     transposeMap.at(&op)->emplace_back(&op);
-
     if (op.getSuccessors().size() == 1 &&
         op.getSuccessors()[0]->getPredecessors().size() == 1 &&
         op.getSuccessors()[0]->isTransposeOp()) {
@@ -1758,26 +1770,41 @@ void CodeEngine::genMemBoundCompute(const MemBoundOp &op) {
              " codegen is omitted since NNET_Tuning_MemBound = 0 */\n");
         return;
     }
+    // Normal membound TVM
+    if (op.getHint().empty()) {
+        nnet::AsTVMVisitor visitor;
+        visitor.dispatch(op.getExpr());
+        auto &&stmts = visitor.getStmts();
+        auto &&inShapes = visitor.getInputShapes();
+        auto &&outShape = visitor.getOutputShape();
 
-    nnet::AsTVMVisitor visitor;
-    // visitor.dispatch(op.getExpr());
-    auto &&stmts = visitor.getStmts();
-    auto &&inShapes = visitor.getInputShapes();
-    auto &&outShape = visitor.getOutputShape();
+        std::vector<std::string> inputs;
+        for (auto &&in : op.getInputs()) {
+            inputs.emplace_back(getVarName(*in));
+        }
+        std::string output = getVarName(*op.getOutput());
 
-    std::vector<std::string> inputs;
-    for (auto &&in : op.getInputs()) {
-        inputs.emplace_back(getVarName(*in));
-    }
-    std::string output = getVarName(*op.getOutput());
+        auto res = getAnsorCode(
+            inShapes, std::vector<std::string>(inShapes.size(), "float32"),
+            outShape, "float32", stmts, func, inputs, output);
 
-    auto res = getAnsorCode(
-        inShapes, std::vector<std::string>(inShapes.size(), "float32"),
-        outShape, "float32", stmts, func, inputs, output);
+        head += "\n" + res.first + "\n" + "/* " + op.getExpr()->toReadable() +
+                " */\n";
+        main += "\n" + res.second + "\n";
+    } else if (op.getHint() == "Reduce_conv3x3+1x1") {
+        genReduce_merge_conv_3x3_1x1(op);
+    } else
+        assert(false);
+}
 
-    head +=
-        "\n" + res.first + "\n" + "/* " + op.getExpr()->toReadable() + " */\n";
-    main += "\n" + res.second + "\n";
+void CodeEngine::genReduce_merge_conv_3x3_1x1(const MemBoundOp &op) {
+    const auto &[n, f, h, w] = op.getNFHW();
+    emit("hetConvToMMReduce(" + std::to_string(n) + ", " + std::to_string(h) +
+         ", " + std::to_string(w) + ", " + std::to_string(f) + ", " +
+         getVarName(*op.getInputs()[0]) + ", " +
+         getVarName(*op.getOutputs()[0]) + ", " +
+         getVarName(*op.getInputs()[1]) + ");");
+    //  var_157, var_11, var_2));
 }
 
 void CodeEngine::genG2BMMDesc(const G2BMMOp &op) {
@@ -1818,13 +1845,16 @@ void CodeEngine::genGBMMLCompute(const GBMMLOp &op) {
          std::to_string(w) + ", " + std::to_string(d) + ");");
 }
 
+void CodeEngine::genBatchNormDesc(const BatchNormOp &op) { return; }
+
+void CodeEngine::genBatchNormCompute(const BatchNormOp &op) { return; }
+
 std::pair<std::string, std::string> CodeEngine::getTVMCode(
     const std::vector<std::vector<int>> &inDims,
     const std::vector<std::string> &inDTypes, const std::vector<int> &outDims,
     const std::string &lambda, const std::string &funcName,
     const std::vector<std::string> &inputNames, const std::string &outputName) {
     std::string funcCode, invokeCode;
-    start_interpreter();
     try {
         auto func = py::module::import("cpp_plugin").attr("gen_simple_op");
         py::tuple code = func(inDims, inDTypes, outDims, lambda, funcName,
@@ -1849,7 +1879,6 @@ std::pair<std::string, std::string> CodeEngine::getAnsorCode(
     const std::string &funcName, const std::vector<std::string> &inputNames,
     const std::string &outputName) {
     std::string funcCode, invokeCode;
-    start_interpreter();
     try {
         auto func = py::module::import("cpp_plugin").attr("gen_ansor_op");
         py::tuple code = func(inDims, inDTypes, outDims, outDType, lambda,

@@ -15,7 +15,7 @@ class GraphBase {
     TensorVec outputs;
 
   public:
-    ~GraphBase();
+    virtual ~GraphBase();
 
     Tensor *tensor(const Dim &dims, Tensor::DataType dtype = Tensor::Float32);
     Tensor *tensor(const Dim &dims, const std::string &dtype);
@@ -32,6 +32,7 @@ class GraphBase {
     void removeOps(OpVec &ops);
 
     bool exportOnnx(const char *path);
+    bool importOnnx(const char *net);
 };
 
 class Graph : public GraphBase {
@@ -53,18 +54,23 @@ class Graph : public GraphBase {
                    Tensor *bias = nullptr);
     // conv trans op
     // bias is not part of the graph connections
+    Tensor *setConvTransInput(Tensor *input);
+    Tensor *setConvTransWeight(Tensor *weight);
+    Tensor *setConvTransOutput(Tensor *outputTrans, Tensor *output = nullptr);
     Operator *convTrans(Tensor *input, Tensor *weight, Tensor *output, int ph,
                         int pw, int sh = 1, int sw = 1, int dh = 1, int dw = 1,
-                        Tensor *bias = nullptr);
+                        int oph = 0, int opw = 0, Tensor *bias = nullptr);
     Operator *convTrans(Tensor *input, Tensor *weight, int ph, int pw,
                         int sh = 1, int sw = 1, int dh = 1, int dw = 1,
-                        Tensor *bias = nullptr);
+                        int oph = 0, int opw = 0, Tensor *bias = nullptr);
     Operator *convTrans(Tensor *input, Tensor *weight, Tensor *output,
                         ConvTransOp::PaddingMode pm, int sh = 1, int sw = 1,
-                        int dh = 1, int dw = 1, Tensor *bias = nullptr);
+                        int dh = 1, int dw = 1, int oph = 0, int opw = 0,
+                        Tensor *bias = nullptr);
     Operator *convTrans(Tensor *input, Tensor *weight,
                         ConvTransOp::PaddingMode pm, int sh = 1, int sw = 1,
-                        int dh = 1, int dw = 1, Tensor *bias = nullptr);
+                        int dh = 1, int dw = 1, int oph = 0, int opw = 0,
+                        Tensor *bias = nullptr);
     // matmul op
     // bias is not part of the graph connections
     Operator *matmul(Tensor *A, Tensor *B, Tensor *C, bool transA = false,
@@ -90,6 +96,7 @@ class Graph : public GraphBase {
     Operator *slice(Tensor *input, Tensor *output, const Dim &begin,
                     const Dim &end);
     Operator *slice(Tensor *input, const Dim &begin, const Dim &end);
+    Operator *slice(Tensor *input, Tensor *output, Tensor *begin, Tensor *end);
     // concat op
     Operator *concat(const TensorVec &inputs, Tensor *output, int dim);
     Operator *concat(const TensorVec &inputs, int dim);
@@ -164,12 +171,16 @@ class Graph : public GraphBase {
     // softmax op
     Operator *softmax(Tensor *input, Tensor *output, int axis);
     Operator *softmax(Tensor *input, int axis);
-    // tanh op
     Operator *tanh(Tensor *input, Tensor *output);
     Operator *tanh(Tensor *input);
     // membound op
-    Operator *membound(TensorVec &inputs, TensorVec &outputs, nnet::Expr expr,
-                       double exec_time);
+    Operator *membound(const TensorVec &inputs, const TensorVec &outputs,
+                       const std::vector<nnet::Tensor> &nnetInputs,
+                       nnet::Expr expr, double exec_time,
+                       std::string hint = {});
+    // resize op
+    Operator *resize(Tensor *input, Tensor *sizes, Tensor *output);
+    Operator *resize(Tensor *input, Tensor *sizes);
 
     void setInputs(TensorVec inputs_);
     void setOutputs(TensorVec outputs_);
@@ -196,6 +207,8 @@ class SubGraph : public GraphBase {
     const std::pair<bool, VType> compute(const Dim &point, size_t outputId = 0,
                                          bool getAllPos = false) const;
     uint64_t getHash();
+    // level 1 considers inputs and outputs while level 2 not
+    uint64_t getCacheIdx(int level);
     int print();
     int printBrief();
     int getComputeOps(std::vector<Operator *> &ops);
@@ -207,6 +220,9 @@ class SubGraph : public GraphBase {
     // merge graph and slave to master, slave will be freed after merge.
     int merge(std::shared_ptr<SubGraph> &master,
               std::shared_ptr<SubGraph> &slave);
+
+    bool compute();
+    bool verification(SubGraph *mutant_graph, bool isFullComputing);
 };
 
 } // end of namespace tpm

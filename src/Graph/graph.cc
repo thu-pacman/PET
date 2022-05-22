@@ -9,142 +9,6 @@
 
 namespace tpm {
 
-PYBIND11_EMBEDDED_MODULE(cpp_module, m) {
-    py::class_<Tensor>(m, "Tensor");
-    py::class_<Operator>(m, "Operator");
-    py::class_<PermItem>(m, "PermItem")
-        .def(py::init<int>())
-        .def(py::init<const std::vector<int> &>())
-        .def(py::init<std::initializer_list<int>>());
-    py::class_<Perm>(m, "Perm")
-        .def(py::init<const std::vector<PermItem> &>())
-        .def(py::init<std::initializer_list<PermItem>>());
-    py::class_<Graph>(m, "Graph")
-        .def("tensor",
-             static_cast<Tensor *(Graph::*)(const Dim &, const std::string &)>(
-                 &Graph::tensor),
-             py::return_value_policy::reference_internal)
-        .def("conv",
-             static_cast<Operator *(Graph::*)(Tensor *, Tensor *, Tensor *, int,
-                                              int, int, int, int, int,
-                                              Tensor *)>(&Graph::conv),
-             py::return_value_policy::reference_internal)
-        .def("convTrans",
-             static_cast<Operator *(Graph::*)(Tensor *, Tensor *, Tensor *, int,
-                                              int, int, int, int, int,
-                                              Tensor *)>(&Graph::convTrans),
-             py::return_value_policy::reference_internal)
-        .def("pad",
-             static_cast<Operator *(Graph::*)(Tensor *, Tensor *, const Dim &,
-                                              const Dim &)>(&Graph::pad),
-             py::return_value_policy::reference_internal)
-        .def(
-            "concat",
-            static_cast<Operator *(Graph::*)(const TensorVec &, Tensor *, int)>(
-                &Graph::concat),
-            py::return_value_policy::reference_internal)
-        .def(
-            "matmul",
-            static_cast<Operator *(Graph::*)(Tensor *, Tensor *, Tensor *, bool,
-                                             bool, Tensor *)>(&Graph::matmul),
-            py::return_value_policy::reference_internal)
-        .def("g2bmm",
-             static_cast<Operator *(Graph::*)(Tensor *, Tensor *, Tensor *, int,
-                                              int, Tensor *)>(&Graph::g2bmm),
-             py::return_value_policy::reference_internal)
-        .def("gbmml",
-             static_cast<Operator *(Graph::*)(Tensor *, Tensor *, Tensor *, int,
-                                              Tensor *)>(&Graph::gbmml),
-             py::return_value_policy::reference_internal)
-        .def("split",
-             static_cast<Operator *(Graph::*)(Tensor *, const TensorVec &, int,
-                                              int)>(&Graph::split),
-             py::return_value_policy::reference_internal)
-        .def("transpose",
-             static_cast<Operator *(Graph::*)(Tensor *, Tensor *, int,
-                                              const Perm &, int)>(
-                 &Graph::transpose),
-             py::return_value_policy::reference_internal)
-        .def("flatten",
-             static_cast<Operator *(Graph::*)(Tensor *, Tensor *, int)>(
-                 &Graph::flatten),
-             py::return_value_policy::reference_internal)
-        .def("maxpool",
-             static_cast<Operator *(Graph::*)(Tensor *, Tensor *, int, int, int,
-                                              int, int, int, int, int)>(
-                 &Graph::maxpool),
-             py::return_value_policy::reference_internal)
-        .def("avgpool",
-             static_cast<Operator *(Graph::*)(Tensor *, Tensor *, int, int, int,
-                                              int, int, int)>(&Graph::avgpool),
-             py::return_value_policy::reference_internal)
-        .def("avgpool",
-             static_cast<Operator *(Graph::*)(Tensor *, Tensor *)>(
-                 &Graph::avgpool),
-             py::return_value_policy::reference_internal)
-        .def("add",
-             static_cast<Operator *(Graph::*)(const TensorVec &, Tensor *)>(
-                 &Graph::add),
-             py::return_value_policy::reference_internal)
-        .def("sub",
-             static_cast<Operator *(Graph::*)(Tensor *, Tensor *, Tensor *)>(
-                 &Graph::sub),
-             py::return_value_policy::reference_internal)
-        .def("mul",
-             static_cast<Operator *(Graph::*)(const TensorVec &, Tensor *)>(
-                 &Graph::mul),
-             py::return_value_policy::reference_internal)
-        .def("div",
-             static_cast<Operator *(Graph::*)(Tensor *, Tensor *, Tensor *)>(
-                 &Graph::div),
-             py::return_value_policy::reference_internal)
-        .def("pow",
-             static_cast<Operator *(Graph::*)(Tensor *, Tensor *, int)>(
-                 &Graph::pow),
-             py::return_value_policy::reference_internal)
-        .def("gather",
-             static_cast<Operator *(Graph::*)(Tensor *, Tensor *, Tensor *,
-                                              int)>(&Graph::gather),
-             py::return_value_policy::reference_internal)
-        .def("reduceMean",
-             static_cast<Operator *(Graph::*)(Tensor *, Tensor *, int)>(
-                 &Graph::reduceMean),
-             py::return_value_policy::reference_internal)
-        .def("softmax",
-             static_cast<Operator *(Graph::*)(Tensor *, Tensor *, int)>(
-                 &Graph::softmax),
-             py::return_value_policy::reference_internal)
-        .def("reshape",
-             static_cast<Operator *(Graph::*)(Tensor *, Tensor *)>(
-                 &Graph::reshape),
-             py::return_value_policy::reference_internal)
-        .def("sigmoid",
-             static_cast<Operator *(Graph::*)(Tensor *, Tensor *)>(
-                 &Graph::sigmoid),
-             py::return_value_policy::reference_internal)
-        .def(
-            "relu",
-            static_cast<Operator *(Graph::*)(Tensor *, Tensor *)>(&Graph::relu),
-            py::return_value_policy::reference_internal)
-        .def(
-            "tanh",
-            static_cast<Operator *(Graph::*)(Tensor *, Tensor *)>(&Graph::tanh),
-            py::return_value_policy::reference_internal)
-        .def("batchnorm",
-             static_cast<Operator *(Graph::*)(Tensor *, Tensor *, Tensor *,
-                                              Tensor *, Tensor *, Tensor *,
-                                              float, float)>(&Graph::batchnorm),
-             py::return_value_policy::reference_internal)
-        .def("identity",
-             static_cast<Operator *(Graph::*)(Tensor *, Tensor *)>(
-                 &Graph::identity),
-             py::return_value_policy::reference_internal)
-        .def("split",
-             static_cast<Operator *(Graph::*)(Tensor *, const TensorVec &, int,
-                                              std::vector<int>)>(&Graph::split),
-             py::return_value_policy::reference_internal);
-}
-
 GraphBase::~GraphBase() {
     for (auto op : ops)
         if (op != nullptr)
@@ -223,47 +87,91 @@ Operator *Graph::conv(Tensor *input, Tensor *weight, ConvOp::PaddingMode pm,
     return op;
 }
 
+Tensor *Graph::setConvTransInput(Tensor *input) {
+    auto op = new TransposeOp(input, -1, {0, 2, 3, 1});
+    auto transInput = op->getOutputs()[0];
+    ops.emplace_back(op);
+    addTensor(transInput);
+    return transInput;
+}
+
+Tensor *Graph::setConvTransWeight(Tensor *weight) {
+    weight->setType(Tensor::Weight);
+    auto op = new TransposeOp(weight, -1, {2, 3, 0, 1});
+    auto transWeight = op->getOutputs()[0];
+    ops.emplace_back(op);
+    addTensor(transWeight);
+    return transWeight;
+}
+
+Tensor *Graph::setConvTransOutput(Tensor *outputTrans, Tensor *output) {
+    if (output == nullptr) {
+        auto op = new TransposeOp(outputTrans, -1, {0, 3, 1, 2});
+        auto output = op->getOutputs()[0];
+        ops.emplace_back(op);
+        addTensor(output);
+    } else {
+        auto op = new TransposeOp(outputTrans, output, -1, {0, 3, 1, 2});
+        ops.emplace_back(op);
+    }
+    return output;
+}
+
 Operator *Graph::convTrans(Tensor *input, Tensor *weight, Tensor *output,
                            int ph, int pw, int sh, int sw, int dh, int dw,
-                           Tensor *bias) {
-    {
-        auto dims = input->getDims();
-        input->setDims({dims[0], dims[2], dims[3], dims[1]});
-    }
-    {
-        auto dims = weight->getDims();
-        weight->setDims({dims[0], dims[2], dims[3], dims[1]});
-    }
+                           int oph, int opw, Tensor *bias) {
+    input = setConvTransInput(input);
+    weight = setConvTransWeight(weight);
     auto op =
-        new ConvTransOp(input, weight, output, ph, pw, sh, sw, dh, dw, bias);
+        new ConvTransOp(input, weight, ph, pw, sh, sw, dh, dw, oph, opw, bias);
     ops.emplace_back(op);
+    auto outputTrans = op->getOutputs()[0];
+    setConvTransOutput(outputTrans, output);
     return op;
 }
 
 Operator *Graph::convTrans(Tensor *input, Tensor *weight, int ph, int pw,
-                           int sh, int sw, int dh, int dw, Tensor *bias) {
-    auto op = new ConvTransOp(input, weight, ph, pw, sh, sw, dh, dw, bias);
+                           int sh, int sw, int dh, int dw, int oph, int opw,
+                           Tensor *bias) {
+    // Not a correct constructor
+    assert(false);
+    input = setConvTransInput(input);
+    weight = setConvTransWeight(weight);
+    auto op =
+        new ConvTransOp(input, weight, ph, pw, sh, sw, dh, dw, oph, opw, bias);
     ops.emplace_back(op);
     auto output = op->getOutputs()[0];
     addTensor(output);
+    setConvTransOutput(output);
     return op;
 }
 
 Operator *Graph::convTrans(Tensor *input, Tensor *weight, Tensor *output,
                            ConvTransOp::PaddingMode pm, int sh, int sw, int dh,
-                           int dw, Tensor *bias) {
-    auto op = new ConvTransOp(input, weight, output, pm, sh, sw, dh, dw, bias);
+                           int dw, int oph, int opw, Tensor *bias) {
+    input = setConvTransInput(input);
+    weight = setConvTransWeight(weight);
+    auto op =
+        new ConvTransOp(input, weight, pm, sh, sw, dh, dw, oph, opw, bias);
     ops.emplace_back(op);
+    auto outputTrans = op->getOutputs()[0];
+    setConvTransOutput(outputTrans, output);
     return op;
 }
 
 Operator *Graph::convTrans(Tensor *input, Tensor *weight,
                            ConvTransOp::PaddingMode pm, int sh, int sw, int dh,
-                           int dw, Tensor *bias) {
-    auto op = new ConvTransOp(input, weight, pm, sh, sw, dh, dw, bias);
+                           int dw, int oph, int opw, Tensor *bias) {
+    // Not a correct constructor
+    assert(false);
+    input = setConvTransInput(input);
+    weight = setConvTransWeight(weight);
+    auto op =
+        new ConvTransOp(input, weight, pm, sh, sw, dh, dw, oph, opw, bias);
     ops.emplace_back(op);
     auto output = op->getOutputs()[0];
     addTensor(output);
+    setConvTransOutput(output);
     return op;
 }
 
@@ -344,6 +252,29 @@ Operator *Graph::slice(Tensor *input, const Dim &begin, const Dim &end) {
     return op;
 }
 
+Operator *Graph::slice(Tensor *input, Tensor *output, Tensor *begin,
+                       Tensor *end) {
+    Dim _begin(begin->size());
+    auto begin_d = begin->getDataPtr();
+    for (size_t i = 0, iEnd = begin->size(); i < iEnd; i++) {
+        if (begin_d != nullptr)
+            _begin[i] = begin_d[i];
+        else
+            _begin[i] = 0;
+    }
+    Dim _end(end->size());
+    auto end_d = end->getDataPtr();
+    for (size_t i = 0, iEnd = end->size(); i < iEnd; i++) {
+        if (end_d != nullptr)
+            _end[i] = end_d[i];
+        else
+            _end[i] = 0;
+    }
+    auto op = new SliceOp(input, output, _begin, _end);
+    ops.emplace_back(op);
+    return op;
+}
+
 Operator *Graph::concat(const TensorVec &inputs, Tensor *output, int dim) {
     auto op = new ConcatOp(inputs, output, dim);
     ops.emplace_back(op);
@@ -392,6 +323,8 @@ Operator *Graph::split(Tensor *input, int dim, std::vector<int> sizes) {
 
 Operator *Graph::transpose(Tensor *input, Tensor *output, int split,
                            const Perm &after, int factor) {
+    if (input->getType() == Tensor::Weight)
+        output->setType(Tensor::Weight);
     auto op = new TransposeOp(input, output, split, after, factor);
     ops.emplace_back(op);
     return op;
@@ -655,23 +588,41 @@ Operator *Graph::softmax(Tensor *input, int axis) {
 }
 
 Operator *Graph::tanh(Tensor *input, Tensor *output) {
-    auto op = new TanhOp(input, output);
+    auto op = new ActivationOp(input, output, Operator::Tanh);
     ops.emplace_back(op);
     return op;
 }
 
 Operator *Graph::tanh(Tensor *input) {
-    auto op = new TanhOp(input);
+    auto op = new ActivationOp(input, Operator::Tanh);
     ops.emplace_back(op);
-    auto output = op->getOutputs()[0];
-    addTensor(output);
+    addTensor(op->getOutputs()[0]);
     return op;
 }
 
-Operator *Graph::membound(TensorVec &inputs, TensorVec &outputs,
-                          nnet::Expr expr, double exec_time) {
-    auto op = new MemBoundOp(inputs, outputs, expr, exec_time);
+Operator *Graph::membound(const TensorVec &inputs, const TensorVec &outputs,
+                          const std::vector<nnet::Tensor> &nnetInputs,
+                          nnet::Expr expr, double _exec_time,
+                          std::string hint) {
+    // 0.001 for kenrel launch
+    double exec_time = (_exec_time == 0) ? 0 : std::max(_exec_time, 0.001);
+    auto op =
+        new MemBoundOp(inputs, outputs, nnetInputs, expr, exec_time, hint);
     ops.emplace_back(op);
+    return op;
+}
+
+Operator *Graph::resize(Tensor *input, Tensor *sizes, Tensor *output) {
+    auto op = new ResizeOp(input, output, sizes);
+    ops.emplace_back(op);
+    return op;
+}
+
+Operator *Graph::resize(Tensor *input, Tensor *sizes) {
+    auto op = new ResizeOp(input, sizes);
+    ops.emplace_back(op);
+    auto output = op->getOutputs()[0];
+    addTensor(output);
     return op;
 }
 
@@ -698,7 +649,6 @@ void Graph::setInputs(TensorVec inputs_) { inputs = inputs_; }
 void Graph::setOutputs(TensorVec outputs_) { outputs = outputs_; }
 
 bool Graph::importOnnx(const char *net) {
-    start_interpreter();
     try {
         py::module::import("cpp_plugin").attr("import_onnx")(this, net);
     } catch (py::error_already_set &e) {
@@ -838,7 +788,6 @@ SubGraph::compute(const Dim &point, size_t outputId, bool getAllPos) const {
         drs[outputs[outputId]] = DimRange::getAllPos();
     else
         drs[outputs[outputId]] = DimRange(point);
-
     // reversed DFS post-order is topo-order
     std::unordered_set<const Operator *> flag;
     // computing functions for operators
@@ -853,17 +802,16 @@ SubGraph::compute(const Dim &point, size_t outputId, bool getAllPos) const {
                 return false;
             }
         }
-
         std::vector<DimRange> inDrs;
         std::function<bool()> runner;
         Tensor *out = op->getOutput();
         if (out != nullptr) {
+            op->print();
             std::tie(inDrs, runner) = op->compute(drs.at(out));
             if (runner == nullptr) {
                 return false;
             }
         } else {
-            assert(op->isSplitOp());
             out = op->getOutputs()[outputId];
             std::tie(inDrs, runner) =
                 dynamic_cast<SplitOp *>(op)->compute(outputId, drs.at(out));
@@ -907,15 +855,12 @@ uint64_t SubGraph::getHash() {
         nodeMap.emplace(op->getGuid(), i);
         cnt[i] = op->getPredecessors().size();
         nodeHash[i] = hashPack(op->getHash());
-    }
-    for (auto t : getInputs()) {
-        inputSet.emplace(t->getGuid());
-    }
-    for (size_t i = 0; i < opList.size(); i++) {
-        auto &op = opList[i];
         if (op->getPredecessors().size() == 0) {
             q.emplace_back(i);
         }
+    }
+    for (auto t : getInputs()) {
+        inputSet.emplace(t->getGuid());
     }
 
     int st = 0, ed = q.size();
@@ -952,6 +897,30 @@ uint64_t SubGraph::getHash() {
     return hash;
 }
 
+uint64_t SubGraph::getCacheIdx(int level) {
+    auto ops = getOperators();
+    uint64_t hash = 0;
+    // for all ops, the number is no more than 2 inputs * 4 dims
+    uint64_t factors[8] = {10000019, 10000079, 10000103, 10000121,
+                           10000139, 10000141, 10000169, 10000189};
+    for (size_t i = 0; i < ops.size(); i++) {
+        hash = hashAppend(hash, std::hash<uint64_t>()(ops[i]->getType()));
+        if (level == 1) {
+            for (size_t j = 0, l = 0; j < ops[i]->getInputs().size(); j++) {
+                uint64_t tensorHash = 0;
+                for (size_t k = 0; k < ops[i]->getInputs()[j]->getDims().size();
+                     k++, l++) {
+                    tensorHash = hashAppend(
+                        tensorHash,
+                        ops[i]->getInputs()[j]->getDims()[k] * factors[l]);
+                }
+                hash = hashAppend(hash, tensorHash);
+            }
+        }
+    }
+    return hash;
+}
+
 int SubGraph::print() {
     std::cout << "Subgraph[" << getHash() << "]" << std::endl;
     std::cout << "    op num: " << getOperators().size() << std::endl;
@@ -964,6 +933,7 @@ int SubGraph::print() {
     for (auto op : getOperators()) {
         std::cout << "        ";
         op->print();
+        std::cout << "        ";
         std::cout << "[" << op->getGuid() << "]";
         std::cout << " pre=[";
         for (auto pre : op->getPredecessors()) {
@@ -972,6 +942,11 @@ int SubGraph::print() {
         std::cout << "], suc=[";
         for (auto suc : op->getSuccessors()) {
             std::cout << suc->getGuid() << ",";
+        }
+        std::cout << "], outputs=[";
+        for (auto output : op->getOutputs()) {
+            std::cout << output->getHash()
+                      << nnet::serializeVec(output->getDims()) << ",";
         }
         std::cout << "]" << std::endl;
     }
@@ -1193,6 +1168,23 @@ void GraphBase::removeOps(OpVec &removed_ops) {
     tensors = new_tensors;
 }
 
+bool GraphBase::importOnnx(const char *net) {
+    try {
+        py::module::import("cpp_plugin").attr("import_onnx")(this, net);
+    } catch (py::error_already_set &e) {
+        if (e.matches(PyExc_ImportError)) {
+            std::cerr << "Import Error. Don't forget to set environment "
+                         "variable PYTHONPATH to contain "
+                         "<repo-root>/python"
+                      << std::endl;
+        }
+        throw;
+    }
+
+    updateConnection();
+    return true;
+}
+
 bool GraphBase::exportOnnx(const char *path) {
     std::vector<std::string> tensor_name;
     std::map<std::string, std::string> tensor_dtype;
@@ -1244,7 +1236,8 @@ bool GraphBase::exportOnnx(const char *path) {
             for (size_t i = 0, iEnd = (outp->getDims()).size(); i < iEnd; ++i) {
                 extra.emplace_back((outp->getDims())[i]);
             }
-            std::string opname = "Reshape_" + std::to_string(op->getGuid()) + "_shape";
+            std::string opname =
+                "Reshape_" + std::to_string(op->getGuid()) + "_shape";
             tensor_value[opname] = extra;
         }
 
@@ -1263,7 +1256,7 @@ bool GraphBase::exportOnnx(const char *path) {
                     outp = "tensor_" + std::to_string(oup->getGuid());
                 } else {
                     outp = "tensor_tr_" + std::to_string(op->getGuid()) + "_" +
-                        std::to_string(i);
+                           std::to_string(i);
                     tensor_name.emplace_back(outp);
                     tensor_dtype[outp] = tensor_dtype[last];
                 }
@@ -1274,8 +1267,8 @@ bool GraphBase::exportOnnx(const char *path) {
                 if (i < iEnd - 1)
                     tensor_dim[outp] = last_dim;
                 std::string opname = optype + "_tr_" +
-                                    std::to_string(op->getGuid()) + "_" +
-                                    std::to_string(i);
+                                     std::to_string(op->getGuid()) + "_" +
+                                     std::to_string(i);
                 op_name.emplace_back(opname);
                 op_input[opname] = {last};
                 op_output[opname] = {outp};
@@ -1339,23 +1332,138 @@ bool GraphBase::exportOnnx(const char *path) {
 
     std::cout << "Operators Got." << std::endl;
 
-    start_interpreter();
     try {
         py::module::import("cpp_plugin")
             .attr("export_onnx")(path, tensor_name, tensor_dtype, tensor_dim,
-                                initializer, op_name, op_input, op_output,
-                                op_attr, tensor_value);
+                                 initializer, op_name, op_input, op_output,
+                                 op_attr, tensor_value);
     } catch (py::error_already_set &e) {
         if (e.matches(PyExc_ImportError)) {
             std::cerr << "Import Error. Don't forget to set environment "
-                        "variable PYTHONPATH to contain "
-                        "<repo-root>/python" 
+                         "variable PYTHONPATH to contain "
+                         "<repo-root>/python"
                       << std::endl;
         }
         throw;
     }
 
     return true;
+}
+
+// compute subGraph in topo order
+bool SubGraph::compute() {
+    auto &opList = getOperators();
+    std::vector<int> cnt(opList.size());
+    std::unordered_map<int, int> opMap;
+    std::vector<int> q;
+    for (size_t i = 0, iEnd = opList.size(); i < iEnd; i++) {
+        auto &op = opList[i];
+        cnt[i] = op->getPredecessors().size();
+        opMap.emplace(op->getGuid(), i);
+        if (cnt[i] == 0) {
+            q.emplace_back(i);
+        }
+    }
+    int st = 0, ed = q.size();
+    while (st < ed) {
+        int id = q[st];
+        st++;
+        auto &op = opList[id];
+        if (op->compute() == nullptr) {
+            return false;
+        }
+        for (auto suc : op->getSuccessors()) {
+            int suc_id = opMap[suc->getGuid()];
+            cnt[suc_id]--;
+            if (cnt[suc_id] == 0) {
+                q.emplace_back(suc_id);
+                ed++;
+            }
+        }
+    }
+    return true;
+}
+
+bool SubGraph::verification(SubGraph *mutant_graph, bool isFullComputing) {
+    const int nSamples = 8;
+    // Init inputs
+    assert(inputs.size() == mutant_graph->getInputs().size());
+    for (size_t i = 0, iEnd = inputs.size(); i < iEnd; i++) {
+        auto input = inputs[i];
+        auto input_mut = mutant_graph->getInputs()[i];
+        assert(input->size() == input_mut->size());
+        // Generate the same input data
+        input->dataRand();
+        input_mut->dataMalloc();
+        input_mut->setData(input->getDataPtr());
+        // // Generate debug data
+        // auto input_d = input->getDataPtr();
+        // auto input_mut_d = input_mut->getDataPtr();
+        // for (size_t j = 0, jEnd = input->size(); j < jEnd; j++) {
+        //     input_d[j] = input_mut_d[j] = 0;
+        // }
+    }
+    // verify outputs
+    bool ret = true;
+    if (isFullComputing == true) {
+        if (!compute() || !mutant_graph->compute()) {
+            assert(!"compute failed");
+            return false;
+        }
+        assert(inputs.size() == mutant_graph->getInputs().size());
+        for (size_t i = 0, iEnd = outputs.size(); i < iEnd; i++) {
+            auto output = outputs[i];
+            auto output_mut = mutant_graph->getOutputs()[i];
+            assert(output->size() == output_mut->size());
+            auto output_d = output->getDataPtr();
+            auto output_mut_d = output_mut->getDataPtr();
+            for (size_t j = 0, jEnd = output->size(); j < jEnd; j++) {
+                if (output_d[j] != output_mut_d[j]) {
+                    dbg(j);
+                    printf("[Wrong] graph = %d bestGraph = %d\n", output_d[j],
+                           output_mut_d[j]);
+                    return false;
+                }
+            }
+        }
+    } else {
+        assert(false); // Data dependence of membound is not implemented
+        std::vector<std::vector<std::pair<Dim, VType>>> computingPos;
+        for (size_t i = 0; i < outputs.size(); i++) {
+            // choose 8 random output positions
+            computingPos.emplace_back();
+            auto &back = computingPos.back();
+            const auto dm = outputs[i]->getDims();
+            srand(time(NULL));
+            for (int j = 0; j < nSamples; j++) {
+                Dim randPos = {};
+                for (auto d : dm) {
+                    int val = ((rand() % 2) + 1) * d / 3;
+                    randPos.emplace_back(val);
+                }
+                back.emplace_back(std::make_pair(randPos, 0));
+            }
+            // compute and compare
+            for (const auto &pos : back) {
+                auto comp = compute(pos.first, i);
+                auto comp_mut = mutant_graph->compute(pos.first, i);
+                if (!comp.first || !comp_mut.first) {
+                    printf("compute failed\n");
+                    return false;
+                }
+                if (comp.second != comp_mut.second) {
+                    dbg(pos);
+                    printf("[Wrong] graph = %d bestGraph = %d\n", comp.second,
+                           comp_mut.second);
+                    ret = false;
+                } else {
+                    printf("graph = %d bestGraph = %d\n", comp.second,
+                           comp_mut.second);
+                }
+            }
+        }
+    }
+    return ret;
 }
 
 } // namespace tpm

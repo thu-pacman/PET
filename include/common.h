@@ -21,6 +21,9 @@
 #include <time.h>
 #include <tuple>
 #include <vector>
+#include <pybind11/pybind11.h>
+
+namespace py = pybind11;
 
 namespace tpm {
 
@@ -155,6 +158,30 @@ inline VType powVType(VType val, int pow) {
     VType ret = 1;
     for (int i = 0; i < pow; ++i)
         ret *= val;
+    return ret;
+}
+
+static int gcd(int a, int b) {
+    if (b == 0)
+        return a;
+    return gcd(b, a % b);
+}
+
+static int gcd(std::vector<int> &vec) {
+    if (vec.empty())
+        return 1;
+    int ret = vec[0];
+    for (size_t i = 1, iEnd = vec.size(); i < iEnd; ++i)
+        ret = gcd(ret, vec[i]);
+    return ret;
+}
+
+static int max(std::vector<int> &vec) {
+    if (vec.empty())
+        return 0;
+    int ret = vec[0];
+    for (size_t i = 1, iEnd = vec.size(); i < iEnd; ++i)
+        ret = std::max(ret, vec[i]);
     return ret;
 }
 } // end of namespace tpm

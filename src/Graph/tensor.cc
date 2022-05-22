@@ -16,4 +16,21 @@ std::pair<Operator *, int> Tensor::getOutputOfWithIndex() {
 bool Tensor::random_inited;
 int Tensor::random_seed[256 * 16];
 
+void printTensor(tpm::Tensor *tensor) {
+    auto data = tensor->getDataPtr();
+    auto sz = tensor->size();
+    for (size_t i = 0; i < sz; ++i) {
+        std::cout << data[i] << ", ";
+        if (i % 14 == 13)
+            std::cout << std::endl;
+    }
+    std::cout << std::endl;
+}
+
+void Tensor::printShape() {
+    std::cout << "[";
+    for (size_t i = 0; i < dims.size() - 1; ++i)
+        std::cout << dims[i] << ", ";
+    std::cout << dims[dims.size() - 1] << "]" << std::endl;
+}
 } // end of namespace tpm
