@@ -1,5 +1,6 @@
 #pragma once
-#include "ffi/ffi.h"
+#include <pybind11/stl.h>
+namespace py = pybind11;
 
 namespace tpm {
 

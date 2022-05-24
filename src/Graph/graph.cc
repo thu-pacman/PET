@@ -1,6 +1,6 @@
 #include "graph.h"
 #include "common.h"
-#include "ffi.h"
+#include "ffi/ffi_embed.h"
 #include "operator.h"
 #include "tensor.h"
 #include <string>
@@ -649,6 +649,7 @@ void Graph::setInputs(TensorVec inputs_) { inputs = inputs_; }
 void Graph::setOutputs(TensorVec outputs_) { outputs = outputs_; }
 
 bool Graph::importOnnx(const char *net) {
+    start_interpreter();
     try {
         py::module::import("cpp_plugin").attr("import_onnx")(this, net);
     } catch (py::error_already_set &e) {

@@ -24,9 +24,8 @@ include_directories(3rd-party/pybind11/include)
 include_directories(3rd-party/nlohmann_json_cmake_fetchcontent/single_include)
 file(GLOB_RECURSE SRC src/*.cc src/*.cu)
 file(GLOB_RECURSE TESTS src/Test/*.cc)
-file(GLOB_RECURSE FFIS src/ffi/*.cc)
-list(REMOVE_ITEM SRC ${TESTS})
-list(REMOVE_ITEM SRC ${FFIS})
+file(GLOB_RECURSE FFIS src/ffi/ffi_pet.cc)
+list(REMOVE_ITEM SRC ${TESTS} ${FFIS})
 
 # CUDA
 find_package(CUDA REQUIRED)

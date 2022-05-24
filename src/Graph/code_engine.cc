@@ -1,5 +1,5 @@
 #include "code_engine.h"
-#include "ffi.h"
+#include "ffi/ffi_embed.h"
 #include "nnet/Visitor/AsTVMVisitor.h"
 #include "perf_engine.h"
 #include "transpose.h"
@@ -1856,6 +1856,7 @@ std::pair<std::string, std::string> CodeEngine::getTVMCode(
     const std::vector<std::string> &inputNames, const std::string &outputName) {
     std::string funcCode, invokeCode;
     try {
+        tpm::start_interpreter();
         auto func = py::module::import("cpp_plugin").attr("gen_simple_op");
         py::tuple code = func(inDims, inDTypes, outDims, lambda, funcName,
                               inputNames, outputName);
@@ -1880,6 +1881,7 @@ std::pair<std::string, std::string> CodeEngine::getAnsorCode(
     const std::string &outputName) {
     std::string funcCode, invokeCode;
     try {
+        tpm::start_interpreter();
         auto func = py::module::import("cpp_plugin").attr("gen_ansor_op");
         py::tuple code = func(inDims, inDTypes, outDims, outDType, lambda,
                               funcName, inputNames, outputName);

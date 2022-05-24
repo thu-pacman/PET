@@ -1,7 +1,6 @@
 #ifndef CMUTATOR_H
 #define CMUTATOR_H
 
-#include "ffi.h"
 #include "mutator.h"
 #include "reciprocity.h"
 #include <unordered_set>

@@ -1,11 +1,17 @@
+#include "ffi/ffi_pet.h"
 #include "code_engine.h"
 #include "common.h"
-#include "ffi/ffi.h"
 #include "graph.h"
 #include "operator.h"
 #include "perf_engine.h"
 #include "search_engine.h"
 #include "tensor.h"
+
+PYBIND11_MODULE(cpp_module, m) {
+    tpm::initGraph(m);
+    tpm::initCodeEngine(m);
+    tpm::initSearchEngine(m);
+}
 
 namespace tpm {
 
