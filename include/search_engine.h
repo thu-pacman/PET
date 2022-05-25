@@ -11,8 +11,8 @@
 namespace tpm {
 class SearchEngine {
   private:
-    int MUTATION_DEPTH = 1;
-    int MUTATION_SIZE = 3;
+    int MUTATION_DEPTH = 5;
+    int MUTATION_SIZE = 5;
     int partitionThreshold =
         3; // cut nodes whose #in + #out >= partitionThreshold
     int GRAPH_SIZE = 5;
