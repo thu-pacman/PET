@@ -54,7 +54,7 @@ int main(int argc, char **argv) {
 
     std::shared_ptr<tpm::SubGraph> graph, bestGraph;
     graph = std::make_shared<tpm::SubGraph>(g->getOperators());
-    tpm::SearchEngine<tpm::Generator> searchEngine;
+    tpm::SearchEngine searchEngine(std::make_shared<tpm::Generator>());
     searchEngine.run(graph, bestGraph);
     tpm::CodeEngine codeEngine;
     auto perfEngine = searchEngine.exportPerfEngine();

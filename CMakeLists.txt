@@ -1,31 +1,34 @@
 cmake_minimum_required(VERSION 3.9) # Required by find_package(OpenMP)
 project(TPM C CXX)
 
-OPTION(BUILD_TEST "Build test (will download and build Google Test)" OFF)
-
 set(DEFAULT_BUILD_TYPE "RelWithDebInfo")
 if(NOT CMAKE_BUILD_TYPE)
     message(STATUS "Setting build type to '${DEFAULT_BUILD_TYPE}' as none was specified.")
     set(CMAKE_BUILD_TYPE "${DEFAULT_BUILD_TYPE}")
 endif()
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Werror")
 set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -UNDEBUG") # Still enable assertion
 set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} -UNDEBUG") # Still enable assertion
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_EXTENSIONS OFF) # -std=gnu++11 when on, -std=c++11 when off
 
+find_package(PythonInterp)
+
 add_subdirectory(3rd-party/pybind11)
+add_subdirectory(3rd-party/nlohmann_json_cmake_fetchcontent)
 
 include_directories(include)
 include_directories(3rd-party/pybind11/include)
+include_directories(3rd-party/nlohmann_json_cmake_fetchcontent/single_include)
 file(GLOB_RECURSE SRC src/*.cc src/*.cu)
 file(GLOB_RECURSE TESTS src/Test/*.cc)
-list(REMOVE_ITEM SRC ${TESTS})
+file(GLOB_RECURSE FFIS src/ffi/ffi_pet.cc)
+list(REMOVE_ITEM SRC ${TESTS} ${FFIS})
 
 # CUDA
 find_package(CUDA REQUIRED)
+find_package(Python COMPONENTS Interpreter Development REQUIRED)
 
 # OpenMP
 find_package(OpenMP)
@@ -36,17 +39,38 @@ if(OpenMP_CXX_FOUND)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
 endif()
 
+
 # Target
 cuda_add_library(tpm SHARED ${SRC})
 cuda_add_cublas_to_target(tpm) # cublas
 target_link_libraries(tpm cudnn curand)
 target_link_libraries(tpm pybind11::embed)
+target_link_libraries(tpm nlohmann_json::nlohmann_json)
+
+# Python bindings
+pybind11_add_module(cpp_module MODULE ${FFIS})
+target_link_libraries(cpp_module PRIVATE tpm)
 
 # Tests
+set(BUILD_PET_TEST ON CACHE BOOL "Build test for PET")
+set(BUILD_NNET_TEST ON CACHE BOOL "Build test for NNET (based on GTest)")
+
 add_executable(onnx_pet src/Test/import_onnx.cpp)
 target_link_libraries(onnx_pet tpm)
 
-if (ON)
+add_executable(onnx_nnet src/Test/import_onnx_nnet.cpp)
+target_link_libraries(onnx_nnet tpm)
+
+add_executable(onnx_cmutator src/Test/import_onnx_cmutator.cpp)
+target_link_libraries(onnx_cmutator tpm)
+
+add_executable(onnx_origin src/Test/import_onnx_origin.cpp)
+target_link_libraries(onnx_origin tpm)
+
+add_executable(onnx_depth src/Test/import_onnx_nnet_depth.cpp)
+target_link_libraries(onnx_depth tpm)
+
+if (BUILD_PET_TEST)
     add_executable(conv1 src/Test/conv_test_1.cc)
     target_link_libraries(conv1 tpm)
 
@@ -61,6 +85,12 @@ if (ON)
 
     add_executable(conv5 src/Test/conv_test_5_trans_kernel.cc)
     target_link_libraries(conv5 tpm)
+
+    add_executable(convtrans1 src/Test/convtrans_test_1.cc)
+    target_link_libraries(convtrans1 tpm)
+
+    add_executable(convtrans2 src/Test/convtrans_test_2.cc)
+    target_link_libraries(convtrans2 tpm)
 
     add_executable(dilation src/Test/dilation_test.cpp)
     target_link_libraries(dilation tpm)
@@ -220,36 +250,13 @@ if (ON)
 
     add_executable(perf_pool src/Test/perf_pool.cc)
     target_link_libraries(perf_pool tpm)
-endif()
 
-if (BUILD_TEST)
-    enable_testing()
-    # set (GTEST_ROOT ${CMAKE_SOURCE_DIR}/ExternalLibs/gTest)
-    find_package(GTest REQUIRED)
+    add_executable(cache1 src/Test/cache_test_1.cc)
+    target_link_libraries(cache1 tpm)
 
-    # Download gtest automatically
-    # include(FetchContent)
-    # FetchContent_Declare(
-    #     googletest
-    #     # Specify the commit you depend on and update it regularly.
-    #     # URL https://github.com/google/googletest/archive/609281088cfefc76f9d0ce82e1ff6c30cc3591e5.zip
-    #     URL https://github.com/google/googletest/archive/refs/tags/release-1.11.0.zip
-    # )
-    # # For Windows: Prevent overriding the parent project's compiler/linker settings
-    # set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
-    # FetchContent_MakeAvailable(googletest)
-    # include_directories(${googletest_SOURCE_DIR}/googletest/include/gtest)
+    add_executable(cache2 src/Test/cache_test_2.cc)
+    target_link_libraries(cache2 tpm)
 
-    # Build all tests
-    # file( GLOB TEST_SOURCES test/test_sg2bmm.cc )
-    # file( GLOB TEST_SOURCES test/test_conv2conv.cc )
-    # file( GLOB TEST_SOURCES test/test_guidedDLT.cc )
-    # file( GLOB TEST_SOURCES test/test_matchConv.cc )
-    file( GLOB TEST_SOURCES test/test_*.cc )
-    foreach( testsourcefile ${TEST_SOURCES} )
-        get_filename_component(testname ${testsourcefile} NAME_WE)
-        add_executable( ${testname} ${testsourcefile} )
-        target_link_libraries(${testname} tpm gtest_main gtest)
-        add_test(NAME ${testname} COMMAND ${testname})
-    endforeach( testsourcefile ${TEST_SOURCES} )
+    add_executable(cache3 src/Test/cache_test_3.cc)
+    target_link_libraries(cache3 tpm)
 endif()

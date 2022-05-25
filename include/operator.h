@@ -2,6 +2,7 @@
 #define OPERATOR_H
 
 #include "common.h"
+#include "nnet/Visitor/Interpreter.h"
 #include "nnet/expr.h"
 #include "perf.h"
 #include "tensor.h"
@@ -44,14 +45,58 @@ class Operator {
         BatchNorm = 200,
         Softmax,
         Activation,
-        Tanh,
-        MemBound,
+        Resize,
+        //
+        MemBound = 300,
     };
+    static std::string getOpName(OpType opType) {
+#define FOP(op)                                                                \
+    case op:                                                                   \
+        return #op
+
+        switch (opType) {
+            FOP(Unknown);
+            // linear
+            FOP(Conv);
+            FOP(Matmul);
+            FOP(ConvTrans);
+            FOP(G2BMM);
+            FOP(GBMML);
+            FOP(Pad);
+            FOP(Slice);
+            FOP(Concat);
+            FOP(Split);
+            FOP(Transpose);
+            FOP(Extend);
+            FOP(MaxPool);
+            FOP(AvgPool);
+            FOP(Add);
+            FOP(Sub);
+            FOP(Mul);
+            FOP(Div);
+            FOP(Pow);
+            FOP(Gather);
+            FOP(ReduceMean);
+            FOP(Reshape);
+            FOP(Identity);
+            // element wise
+            FOP(BatchNorm);
+            FOP(Softmax);
+            FOP(Activation);
+            //
+            FOP(MemBound);
+        default:
+            assert(false);
+            break;
+        }
+#undef FOP
+    }
 
     enum ActType {
         None,
         Relu,
         Sigmoid,
+        Tanh,
     };
 
     // TODO : remove all generateHash in ops;
@@ -70,7 +115,7 @@ class Operator {
     virtual ~Operator() {}
 
     bool isLinearOp() const { return type >= 100 && type < 200; }
-    bool isElementWiseOp() const { return type >= 200; }
+    bool isElementWiseOp() const { return type >= 200 && type < 300; }
     bool isSplitOp() const { return type == Split; }
     bool isConcatOp() const { return type == Concat; }
     bool isComputeOp() const {
@@ -82,7 +127,7 @@ class Operator {
     bool isReshapeOp() const { return type == Reshape; }
 
     bool isMemBoundOp() const {
-        return type == MemBound || type == Activation || type == Tanh;
+        return type == MemBound || type == Activation || type == Transpose;
     }
 
     // if operator does not have any connection with other ops or tensors
@@ -184,8 +229,12 @@ class Operator {
 
     virtual int numOutputs() = 0;
 
-    virtual void print() const final { std::cout << toString() << std::flush; }
+    virtual void print() const final {
+        std::cout << toString() << std::flush;
+        std::cout << std::endl;
+    }
     virtual std::string toString() const = 0;
+    virtual std::string getName() const { return typeid(*this).name(); };
 
     size_t getGuid() const { return guid; }
 
@@ -198,8 +247,9 @@ class Operator {
         assert(false);
     }
 
-    virtual void getOptypeAttr(std::string &optype, std::map<std::string, std::string> &attr, 
-                               std::map<std::string, std::vector<int>> &extra) const = 0;
+    virtual void
+    getOptypeAttr(std::string &optype, std::map<std::string, std::string> &attr,
+                  std::map<std::string, std::vector<int>> &extra) const = 0;
 
   protected:
     const size_t guid;
@@ -292,8 +342,9 @@ class ConvOp : public Operator {
     int getSh() const { return sh; }
     int getSw() const { return sw; }
 
-    void getOptypeAttr(std::string &optype, std::map<std::string, std::string> &attr,
-                       std::map<std::string, std::vector<int>> &extra) const override;
+    void getOptypeAttr(
+        std::string &optype, std::map<std::string, std::string> &attr,
+        std::map<std::string, std::vector<int>> &extra) const override;
 
     ConvArgs getArgs(int withPenalty) const {
         auto input = inputs[0], weight = inputs[1];
@@ -399,10 +450,14 @@ class MatmulOp : public Operator {
 
     void dimExtend(Tensor *t);
 
-    void getOptypeAttr(std::string &optype, std::map<std::string, std::string> &attr,
-                    std::map<std::string, std::vector<int>> &extra) const override;
+    void getOptypeAttr(
+        std::string &optype, std::map<std::string, std::string> &attr,
+        std::map<std::string, std::vector<int>> &extra) const override;
 
   private:
+    // PET assume a row-major tensor layout. transA=false means default dims,
+    // true means A should be transposed before matmul.
+    // This is in oppsite to column-major BLAS.
     bool transA, transB;
     Tensor *bias; // not part of the graph connections
     ActType act;
@@ -436,22 +491,25 @@ class ConvTransOp : public Operator {
   public:
     // Constructors for explicitly setting padding size
     ConvTransOp(Tensor *input, Tensor *weight, Tensor *output, int ph, int pw,
-                int sh = 1, int sw = 1, int dh = 1, int dw = 1,
-                Tensor *bias = nullptr, ActType act = None);
+                int sh = 1, int sw = 1, int dh = 1, int dw = 1, int oph = 1,
+                int opw = 1, Tensor *bias = nullptr, ActType act = None);
     ConvTransOp(Tensor *input, Tensor *weight, int ph, int pw, int sh = 1,
-                int sw = 1, int dh = 1, int dw = 1, Tensor *bias = nullptr,
-                ActType act = None);
-    ConvTransOp(int ph, int pw, int sh = 1, int sw = 1, int dh = 1, int dw = 1,
+                int sw = 1, int dh = 1, int dw = 1, int oph = 0, int opw = 0,
                 Tensor *bias = nullptr, ActType act = None);
+    ConvTransOp(int ph, int pw, int sh = 1, int sw = 1, int dh = 1, int dw = 1,
+                int oph = 0, int opw = 0, Tensor *bias = nullptr,
+                ActType act = None);
     // Constructors for setting padding mode
     ConvTransOp(Tensor *input, Tensor *weight, Tensor *output,
                 PaddingMode pm = Same, int sh = 1, int sw = 1, int dh = 1,
-                int dw = 1, Tensor *bias = nullptr, ActType act = None);
+                int dw = 1, int oph = 0, int opw = 0, Tensor *bias = nullptr,
+                ActType act = None);
     ConvTransOp(Tensor *input, Tensor *weight, PaddingMode pm = Same,
-                int sh = 1, int sw = 1, int dh = 1, int dw = 1,
-                Tensor *bias = nullptr, ActType act = None);
+                int sh = 1, int sw = 1, int dh = 1, int dw = 1, int oph = 1,
+                int opw = 1, Tensor *bias = nullptr, ActType act = None);
     ConvTransOp(PaddingMode pm = Same, int sh = 1, int sw = 1, int dh = 1,
-                int dw = 1, Tensor *bias = nullptr, ActType act = None);
+                int dw = 1, int oph = 0, int opw = 0, Tensor *bias = nullptr,
+                ActType act = None);
     ConvTransOp(const ConvTransOp &rhs);
 
     ConvTransOp *clone() override { return new ConvTransOp(*this); }
@@ -493,6 +551,7 @@ class ConvTransOp : public Operator {
         os << "p=[" << ph << "," << pw << "],";
         os << "s=[" << sh << "," << sw << "],";
         os << "d=[" << dh << "," << dw << "],";
+        os << "op=[" << oph << ", " << opw << "],";
         os << "act=" << act << ",";
         os << "input=" << inputs[0]->getHash() << ",";
         os << "weight=" << inputs[1]->getHash() << ",";
@@ -519,31 +578,36 @@ class ConvTransOp : public Operator {
     int getPw() const { return pw; }
     int getSh() const { return sh; }
     int getSw() const { return sw; }
+    int getOph() const { return oph; }
+    int getOpw() const { return opw; }
 
     ConvArgs getArgs(int withPenalty) const {
         auto input = inputs[0], weight = inputs[1];
         auto n = input->getDims()[0] + withPenalty * input->getPenalty()[0];
-        auto f = input->getDims()[3] + withPenalty * input->getPenalty()[3];
         auto h = input->getDims()[1] + withPenalty * input->getPenalty()[1];
         auto w = input->getDims()[2] + withPenalty * input->getPenalty()[2];
-        assert(f == weight->getDims()[0]);
+        auto f = input->getDims()[3] + withPenalty * input->getPenalty()[3];
+        assert(f == weight->getDims()[2]);
+        auto r = weight->getDims()[0];
+        auto s = weight->getDims()[1];
         auto c = weight->getDims()[3];
         auto cpg = weight->getDims()[3];
-        auto r = weight->getDims()[1];
-        auto s = weight->getDims()[2];
         auto g = c / cpg;
         auto bi = (bias == nullptr) ? 0 : 1;
         auto ac = act;
+        // TODO: currently args for convtrans do not include oph and opw
         return ConvArgs{n, c, h, w, f, r, s, ph, pw, sh, sw, dh, dw, g, bi, ac};
     }
 
-    void getOptypeAttr(std::string &optype, std::map<std::string, std::string> &attr,
-                       std::map<std::string, std::vector<int>> &extra) const override;
+    void getOptypeAttr(
+        std::string &optype, std::map<std::string, std::string> &attr,
+        std::map<std::string, std::vector<int>> &extra) const override;
 
   private:
     int ph, pw;
     int sh, sw;
     int dh, dw;
+    int oph, opw;
     Tensor *bias; // not part of the graph connections
     ActType act;
     PaddingMode padding;
@@ -623,8 +687,9 @@ class G2BMMOp : public Operator {
 
     void dimExtend(Tensor *t);
 
-    void getOptypeAttr(std::string &optype, std::map<std::string, std::string> &attr,
-                    std::map<std::string, std::vector<int>> &extra) const override;
+    void getOptypeAttr(
+        std::string &optype, std::map<std::string, std::string> &attr,
+        std::map<std::string, std::vector<int>> &extra) const override;
 
   private:
     int width, dilation;
@@ -702,8 +767,9 @@ class GBMMLOp : public Operator {
 
     void dimExtend(Tensor *t);
 
-    void getOptypeAttr(std::string &optype, std::map<std::string, std::string> &attr,
-                    std::map<std::string, std::vector<int>> &extra) const override;
+    void getOptypeAttr(
+        std::string &optype, std::map<std::string, std::string> &attr,
+        std::map<std::string, std::vector<int>> &extra) const override;
 
   private:
     int dilation;
@@ -741,8 +807,9 @@ class PadOp : public Operator {
     const Dim &getBegin() const { return begin; }
     const Dim &getEnd() const { return end; }
 
-    void getOptypeAttr(std::string &optype, std::map<std::string, std::string> &attr,
-                    std::map<std::string, std::vector<int>> &extra) const override;
+    void getOptypeAttr(
+        std::string &optype, std::map<std::string, std::string> &attr,
+        std::map<std::string, std::vector<int>> &extra) const override;
 
   private:
     Dim begin, end;
@@ -778,8 +845,9 @@ class SliceOp : public Operator {
     const Dim &getBegin() const { return begin; }
     const Dim &getEnd() const { return end; }
 
-    void getOptypeAttr(std::string &optype, std::map<std::string, std::string> &attr,
-                    std::map<std::string, std::vector<int>> &extra) const override;
+    void getOptypeAttr(
+        std::string &optype, std::map<std::string, std::string> &attr,
+        std::map<std::string, std::vector<int>> &extra) const override;
 
   private:
     Dim begin, end;
@@ -857,8 +925,9 @@ class ConcatOp : public Operator {
 
     int getDim() const { return dim; }
 
-    void getOptypeAttr(std::string &optype, std::map<std::string, std::string> &attr,
-                    std::map<std::string, std::vector<int>> &extra) const override;
+    void getOptypeAttr(
+        std::string &optype, std::map<std::string, std::string> &attr,
+        std::map<std::string, std::vector<int>> &extra) const override;
 
   private:
     int dim;
@@ -951,8 +1020,9 @@ class SplitOp : public Operator {
 
     int getDim() const { return dim; }
 
-    void getOptypeAttr(std::string &optype, std::map<std::string, std::string> &attr,
-                    std::map<std::string, std::vector<int>> &extra) const override;
+    void getOptypeAttr(
+        std::string &optype, std::map<std::string, std::string> &attr,
+        std::map<std::string, std::vector<int>> &extra) const override;
 
   private:
     int dim, num;
@@ -1119,8 +1189,10 @@ class TransposeOp : public Operator {
         padding_w = w;
     }
 
-    void getOptypeAttr(std::string &optype, std::map<std::string, std::string> &attr,
-                       std::map<std::string, std::vector<int>> &extra) const override;
+    void getOptypeAttr(
+        std::string &optype, std::map<std::string, std::string> &attr,
+        std::map<std::string, std::vector<int>> &extra) const override;
+    std::pair<Perm, Perm> getBeforeAndAfter() { return {before, after}; }
 
   private:
     int split, factor;
@@ -1174,8 +1246,9 @@ class ExtendOp : public Operator {
     int getDim() const { return dim; }
     int getNum() const { return num; }
 
-    void getOptypeAttr(std::string &optype, std::map<std::string, std::string> &attr,
-                    std::map<std::string, std::vector<int>> &extra) const override;
+    void getOptypeAttr(
+        std::string &optype, std::map<std::string, std::string> &attr,
+        std::map<std::string, std::vector<int>> &extra) const override;
 
   private:
     int dim, num;
@@ -1232,8 +1305,9 @@ class BatchNormOp : public Operator {
 
     int numOutputs() override { return 1; }
 
-    void getOptypeAttr(std::string &optype, std::map<std::string, std::string> &attr,
-                    std::map<std::string, std::vector<int>> &extra) const override;
+    void getOptypeAttr(
+        std::string &optype, std::map<std::string, std::string> &attr,
+        std::map<std::string, std::vector<int>> &extra) const override;
 
   private:
     float epsilon, momentum;
@@ -1297,8 +1371,9 @@ class MaxPoolOp : public Operator {
     int getSh() const { return sh; }
     int getSw() const { return sw; }
 
-    void getOptypeAttr(std::string &optype, std::map<std::string, std::string> &attr,
-                    std::map<std::string, std::vector<int>> &extra) const override;
+    void getOptypeAttr(
+        std::string &optype, std::map<std::string, std::string> &attr,
+        std::map<std::string, std::vector<int>> &extra) const override;
 
   private:
     int kh, kw;
@@ -1372,8 +1447,9 @@ class AvgPoolOp : public Operator {
     int getSh() const { return sh; }
     int getSw() const { return sw; }
 
-    void getOptypeAttr(std::string &optype, std::map<std::string, std::string> &attr,
-                    std::map<std::string, std::vector<int>> &extra) const override;
+    void getOptypeAttr(
+        std::string &optype, std::map<std::string, std::string> &attr,
+        std::map<std::string, std::vector<int>> &extra) const override;
 
   private:
     int kh, kw;
@@ -1423,8 +1499,9 @@ class AddOp : public Operator {
 
     int numOutputs() override { return 1; }
 
-    void getOptypeAttr(std::string &optype, std::map<std::string, std::string> &attr,
-                    std::map<std::string, std::vector<int>> &extra) const override;
+    void getOptypeAttr(
+        std::string &optype, std::map<std::string, std::string> &attr,
+        std::map<std::string, std::vector<int>> &extra) const override;
 };
 
 class SubOp : public Operator {
@@ -1463,8 +1540,9 @@ class SubOp : public Operator {
 
     int numOutputs() override { return 1; }
 
-    void getOptypeAttr(std::string &optype, std::map<std::string, std::string> &attr,
-                    std::map<std::string, std::vector<int>> &extra) const override;
+    void getOptypeAttr(
+        std::string &optype, std::map<std::string, std::string> &attr,
+        std::map<std::string, std::vector<int>> &extra) const override;
 };
 
 class MulOp : public Operator {
@@ -1509,8 +1587,9 @@ class MulOp : public Operator {
 
     int numOutputs() override { return 1; }
 
-    void getOptypeAttr(std::string &optype, std::map<std::string, std::string> &attr,
-                    std::map<std::string, std::vector<int>> &extra) const override;
+    void getOptypeAttr(
+        std::string &optype, std::map<std::string, std::string> &attr,
+        std::map<std::string, std::vector<int>> &extra) const override;
 };
 
 class DivOp : public Operator {
@@ -1549,8 +1628,9 @@ class DivOp : public Operator {
 
     int numOutputs() override { return 1; }
 
-    void getOptypeAttr(std::string &optype, std::map<std::string, std::string> &attr,
-                    std::map<std::string, std::vector<int>> &extra) const override;
+    void getOptypeAttr(
+        std::string &optype, std::map<std::string, std::string> &attr,
+        std::map<std::string, std::vector<int>> &extra) const override;
 };
 
 class PowOp : public Operator {
@@ -1590,8 +1670,9 @@ class PowOp : public Operator {
 
     int numOutputs() override { return 1; }
 
-    void getOptypeAttr(std::string &optype, std::map<std::string, std::string> &attr,
-                    std::map<std::string, std::vector<int>> &extra) const override;
+    void getOptypeAttr(
+        std::string &optype, std::map<std::string, std::string> &attr,
+        std::map<std::string, std::vector<int>> &extra) const override;
 
   private:
     int pow;
@@ -1640,8 +1721,9 @@ class GatherOp : public Operator {
 
     int getAxis() const { return axis; }
 
-    void getOptypeAttr(std::string &optype, std::map<std::string, std::string> &attr,
-                    std::map<std::string, std::vector<int>> &extra) const override;
+    void getOptypeAttr(
+        std::string &optype, std::map<std::string, std::string> &attr,
+        std::map<std::string, std::vector<int>> &extra) const override;
 
   private:
     int axis;
@@ -1691,8 +1773,9 @@ class ReduceMeanOp : public Operator {
 
     int numOutputs() override { return 1; }
 
-    void getOptypeAttr(std::string &optype, std::map<std::string, std::string> &attr,
-                    std::map<std::string, std::vector<int>> &extra) const override;
+    void getOptypeAttr(
+        std::string &optype, std::map<std::string, std::string> &attr,
+        std::map<std::string, std::vector<int>> &extra) const override;
 
   private:
     int axis;
@@ -1708,6 +1791,7 @@ class ReshapeOp : public Operator {
   public:
     ReshapeOp(Tensor *input, Tensor *output)
         : Operator(Reshape, {input}, {output}) {
+        assert(input->size() == output->size());
         initHash();
     }
 
@@ -1722,9 +1806,12 @@ class ReshapeOp : public Operator {
     std::pair<std::vector<DimRange>, std::function<bool()>>
     compute(DimRange dr) override;
 
+    // The result of ReshapeOp's shape inference is the output's shape
+    // ReshapeOp always requires a output when constructing
     Dim computeShape() override {
-        assert(false);
-        return {};
+        return outputs[0]->getDims();
+        // assert(false);
+        // return {};
     }
 
     double perf(PerfEngine *pe, int rounds, int warmupRounds) override {
@@ -1742,8 +1829,9 @@ class ReshapeOp : public Operator {
 
     int numOutputs() override { return 1; }
 
-    void getOptypeAttr(std::string &optype, std::map<std::string, std::string> &attr,
-                    std::map<std::string, std::vector<int>> &extra) const override;
+    void getOptypeAttr(
+        std::string &optype, std::map<std::string, std::string> &attr,
+        std::map<std::string, std::vector<int>> &extra) const override;
 };
 
 class IdentityOp : public Operator {
@@ -1791,8 +1879,9 @@ class IdentityOp : public Operator {
         outputs[0]->setSplittingPoints(*inputs[0]->getSplittingPoints());
     };
 
-    void getOptypeAttr(std::string &optype, std::map<std::string, std::string> &attr,
-                    std::map<std::string, std::vector<int>> &extra) const override;
+    void getOptypeAttr(
+        std::string &optype, std::map<std::string, std::string> &attr,
+        std::map<std::string, std::vector<int>> &extra) const override;
 };
 
 class SoftmaxOp : public Operator {
@@ -1840,58 +1929,12 @@ class SoftmaxOp : public Operator {
 
     int getAxis() const { return axis; }
 
-    void getOptypeAttr(std::string &optype, std::map<std::string, std::string> &attr,
-                    std::map<std::string, std::vector<int>> &extra) const override;
+    void getOptypeAttr(
+        std::string &optype, std::map<std::string, std::string> &attr,
+        std::map<std::string, std::vector<int>> &extra) const override;
 
   private:
     int axis;
-};
-
-class TanhOp : public Operator {
-  private:
-    bool checkValid(const TensorVec &inputs) override { return true; }
-    void initHash() override;
-
-  public:
-    TanhOp(Tensor *input, Tensor *output) : Operator(Tanh, {input}, {output}) {
-        initHash();
-    }
-
-    TanhOp(Tensor *input);
-
-    TanhOp(const TanhOp &rhs) : Operator(rhs) {}
-
-    TanhOp() : Operator(Tanh) { initHash(); }
-
-    TanhOp *clone() override { return new TanhOp(*this); }
-
-    Tensor *compute() override;
-
-    std::pair<std::vector<DimRange>, std::function<bool()>>
-    compute(DimRange dr) override;
-
-    Dim computeShape() override;
-
-    double perf(PerfEngine *pe, int rounds, int warmupRounds) override {
-        int size = 4;
-        for (auto len : inputs[0]->getDims()) {
-            size *= len;
-        }
-        return double(size) / (200 * 1000 * 1000);
-    }
-
-    std::string toString() const override {
-        std::ostringstream os;
-        os << "Tanh(input=" << inputs[0]->getHash()
-           << ",out=" << outputs[0]->getHash() << ")";
-        return os.str();
-    }
-
-    int numInputs() override { return 1; }
-    int numOutputs() override { return 1; }
-
-    void getOptypeAttr(std::string &optype, std::map<std::string, std::string> &attr,
-                    std::map<std::string, std::vector<int>> &extra) const override;
 };
 
 class ActivationOp : public Operator {
@@ -1935,6 +1978,7 @@ class ActivationOp : public Operator {
 
     Dim computeShape() override {
         outputs[0]->setType(inputs[0]->getType());
+        outputs[0]->setDims(inputs[0]->getDims());
         return inputs[0]->getDims();
     }
 
@@ -1954,8 +1998,9 @@ class ActivationOp : public Operator {
 
     ActType getActType() const { return actType; }
 
-    void getOptypeAttr(std::string &optype, std::map<std::string, std::string> &attr,
-                    std::map<std::string, std::vector<int>> &extra) const override;
+    void getOptypeAttr(
+        std::string &optype, std::map<std::string, std::string> &attr,
+        std::map<std::string, std::vector<int>> &extra) const override;
 
   private:
     ActType actType;
@@ -1968,9 +2013,11 @@ class MemBoundOp : public Operator {
     void setWeight();
 
   public:
-    MemBoundOp(TensorVec &input, TensorVec &output, nnet::Expr expr,
-               double exec_time)
-        : Operator(MemBound, input, output), expr(expr), exec_time(exec_time) {
+    MemBoundOp(const TensorVec &input, const TensorVec &output,
+               const std::vector<nnet::Tensor> &nnetInputs, nnet::Expr expr,
+               double exec_time, std::string hint = {})
+        : Operator(MemBound, input, output), nnetInputs(nnetInputs), expr(expr),
+          exec_time(exec_time), hint(hint) {
         initHash();
         // output must be set
         assert(outputs.size() != 0);
@@ -1984,27 +2031,21 @@ class MemBoundOp : public Operator {
     }
 
     MemBoundOp(const MemBoundOp &rhs)
-        : Operator(rhs), expr(rhs.expr), exec_time(rhs.exec_time) {}
+        : Operator(rhs), nnetInputs(rhs.nnetInputs), expr(rhs.expr),
+          exec_time(rhs.exec_time), hint(rhs.hint), n(rhs.n), f(rhs.f),
+          h(rhs.h), w(rhs.w) {}
 
     MemBoundOp *clone() override { return new MemBoundOp(*this); }
 
-    Tensor *compute() override {
-        // compute is not set
-        assert(false);
-        return nullptr;
-    }
+    Tensor *compute() override;
 
     std::pair<std::vector<DimRange>, std::function<bool()>>
-    compute(DimRange dr) override {
-        // compute is not set
-        assert(false);
-        return {{}, nullptr};
-    }
+    compute(DimRange dr) override;
 
     Dim computeShape() override {
-        // output must be set
-        assert(false);
-        return {};
+        assert(outputs[0]->getDims() ==
+               nnet::as<nnet::RangeOpNode>(expr)->getOutputShape());
+        return outputs[0]->getDims();
     }
 
     double perf(PerfEngine *pe, int rounds, int warmupRounds) override {
@@ -2016,13 +2057,21 @@ class MemBoundOp : public Operator {
         os << "MemBound[" << hash << "](";
         for (size_t i = 0; i < inputs.size(); ++i) {
             os << "i" << i << "=" << inputs[i]->getHash();
+            if (i != inputs.size() - 1)
+                os << " ";
         }
-        os << ",";
+        os << ", ";
         for (size_t i = 0; i < outputs.size(); ++i) {
             os << "o" << i << "=" << outputs[i]->getHash();
+            if (i != outputs.size() - 1)
+                os << " ";
         }
-        os << ",";
-        os << "exec_time=" << exec_time << ")";
+        os << ", ";
+        os << "exec_time=" << exec_time << ", ";
+        os << "NNet Inputs=[";
+        for (const auto &tensor : nnetInputs)
+            os << tensor->toReadable() << ",";
+        os << "])";
         return os.str();
     }
 
@@ -2031,13 +2080,83 @@ class MemBoundOp : public Operator {
 
     nnet::Expr getExpr() const { return expr; }
     bool isComputeWeight() const;
+    const std::string &getHint() const { return hint; }
+    void setNFHW(int _n, int _f, int _h, int _w) {
+        n = _n;
+        f = _f;
+        h = _h;
+        w = _w;
+    }
+    std::tuple<int, int, int, int> getNFHW() const { return {n, f, h, w}; }
+
+    void getOptypeAttr(
+        std::string &optype, std::map<std::string, std::string> &attr,
+        std::map<std::string, std::vector<int>> &extra) const override;
+
+  private:
+    std::vector<nnet::Tensor> nnetInputs;
+    nnet::Expr expr;
+    double exec_time;
+    std::string hint;
+    int n, f, h, w;
+};
+
+class ResizeOp : public Operator {
+  private:
+    bool checkValid(const TensorVec &inputs) override {
+        int inputDim = inputs[0]->getDims().size();
+        int sizesDim = sizes->getDims().size();
+        return inputDim == sizesDim;
+    }
+    void initHash() override;
+  
+  public:
+    ResizeOp(Tensor *input, Tensor *sizes, Tensor *output)
+        : Operator(Resize, {input}, {output}), sizes(sizes) {
+        initHash();
+    }
+
+    ResizeOp(Tensor *input, Tensor *sizes);
+
+    ResizeOp(const ResizeOp &rhs) : Operator(rhs), sizes(rhs.sizes->clone()) {
+        initHash();
+    }
+
+    ResizeOp() : Operator(Resize) { initHash(); }
+
+    ResizeOp *clone() override { return new ResizeOp(*this); }
+
+    Tensor *compute() override;
+
+    std::pair<std::vector<DimRange>, std::function<bool()>>
+    compute(DimRange dr) override;
+
+    Dim computeShape() override;
+
+    double perf(PerfEngine *pe, int rounds, int warmupRounds) override {
+      return 0.0;
+    }
+
+    std::string toString() const override {
+      std::ostringstream os;
+      os << "Resize(X=" << inputs[0]->getHash()
+         << ", Y=" << outputs[0]->getHash() << ")";
+      return os.str();
+    }
+
+    int numInputs() override { return 1; }
+    int numOutputs() override { return 1; }
 
     void getOptypeAttr(std::string &optype, std::map<std::string, std::string> &attr,
                     std::map<std::string, std::vector<int>> &extra) const override;
 
   private:
-    nnet::Expr expr;
-    double exec_time;
+    Tensor *sizes;
+
+    std::string coordinate_transformation_mode = "align_corners";
+    float cubic_coeff_a = 0.75;
+    std::string mode = "linear";
+    std::string nearest_mode = "floor";
 };
 
 } // end of namespace tpm

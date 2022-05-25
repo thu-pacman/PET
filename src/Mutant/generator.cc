@@ -2,30 +2,6 @@
 #include "cstdlib"
 using namespace tpm;
 
-static int gcd(int a, int b) {
-    if (b == 0)
-        return a;
-    return gcd(b, a % b);
-}
-
-static int gcd(std::vector<int> &vec) {
-    if (vec.empty())
-        return 1;
-    int ret = vec[0];
-    for (size_t i = 1, iEnd = vec.size(); i < iEnd; ++i)
-        ret = gcd(ret, vec[i]);
-    return ret;
-}
-
-static int max(std::vector<int> &vec) {
-    if (vec.empty())
-        return 0;
-    int ret = vec[0];
-    for (size_t i = 1, iEnd = vec.size(); i < iEnd; ++i)
-        ret = std::max(ret, vec[i]);
-    return ret;
-}
-
 Generator::Generator(bool prune_reciprocity)
     : equal_threshold(0.7), num_valid_tensors(0), num_total_tensors(0),
       max_depth(3), searchingGraph(new SubGraph()),
@@ -211,8 +187,7 @@ void Generator::run(SubGraph *in_graph, std::vector<SubGraph *> &out_graphs,
         addPreprocessForGroupConvOneInput(in_graph);
         SubGraph *new_graph = new SubGraph(oplist);
         auto newOutputs = new_graph->getOutputs();
-        for (size_t i = 0, j = 0, iEnd = newOutputs.size(); i < iEnd;
-                ++i) {
+        for (size_t i = 0, j = 0, iEnd = newOutputs.size(); i < iEnd; ++i) {
             if (newOutputs[i]->isNotCounted())
                 continue;
             newOutputs[i]->clone(in_graph->getOutputs()[j]);
@@ -260,17 +235,6 @@ void Generator::run(SubGraph *in_graph, std::vector<SubGraph *> &out_graphs,
         popBackTensor();
     num_reserve_ops = 0;
     group_size = -1;
-}
-
-void printTensor(tpm::Tensor *tensor) {
-    auto data = tensor->getDataPtr();
-    auto sz = tensor->size();
-    for (size_t i = 0; i < sz; ++i) {
-        std::cout << data[i] << ", ";
-        if (i % 14 == 13)
-            std::cout << std::endl;
-    }
-    std::cout << std::endl;
 }
 
 void Generator::dfs(int depth, SubGraph *in_graph, SubGraph *cur_graph,
@@ -1600,9 +1564,31 @@ uint64_t Generator::computeHashForSingleComputeOp(const Operator *op) {
                 weightDim[2] * 10000169 + weightDim[3] * 10000189;
         return hash;
     } else if (op->getType() == Operator::Matmul) {
+        // HACK: Not transform mutation
         static uint64_t matmulhash = 0;
         return matmulhash++;
+    } else if (op->getType() == Operator::G2BMM) {
+        auto g2bmm = dynamic_cast<const G2BMMOp *>(op);
+        auto hash = g2bmm->getHash();
+        auto inputDim = g2bmm->getInputs()[0]->getDims();
+        auto weightDim = g2bmm->getOutputs()[0]->getDims();
+        hash += inputDim[0] * 10000019 + inputDim[1] * 10000079 +
+                inputDim[2] * 10000103 + inputDim[3] * 10000121 +
+                weightDim[0] * 10000139 + weightDim[1] * 10000141 +
+                weightDim[2] * 10000169 + weightDim[3] * 10000189;
+        return hash;
+    } else if (op->getType() == Operator::GBMML) {
+        auto gbmml = dynamic_cast<const GBMMLOp *>(op);
+        auto hash = gbmml->getHash();
+        auto inputDim = gbmml->getInputs()[0]->getDims();
+        auto weightDim = gbmml->getOutputs()[0]->getDims();
+        hash += inputDim[0] * 10000019 + inputDim[1] * 10000079 +
+                inputDim[2] * 10000103 + inputDim[3] * 10000121 +
+                weightDim[0] * 10000139 + weightDim[1] * 10000141 +
+                weightDim[2] * 10000169 + weightDim[3] * 10000189;
+        return hash;
     } else {
+        // Not impl
         assert(false);
         return 0;
     }
@@ -1975,112 +1961,4 @@ bool Generator::validDepth(SubGraph *sg) {
     if (sg->getOperators().size() > (size_t)max_depth && max_depth < 5)
         return false;
     return true;
-}
-
-Reciprocity::Reciprocity(const std::vector<std::shared_ptr<Operator>> &ops) {
-    search_reciprocity(ops);
-}
-
-void Reciprocity::search_reciprocity(
-    const std::vector<std::shared_ptr<Operator>> &ops) {
-    // construct a graph to find reciprocities
-    auto g = new tpm::Graph();
-    auto i0 = g->tensor({6, 6, 14, 14});
-    auto i1 = g->tensor({6, 6, 14, 14});
-    auto op0 = g->identity(i0, i1);
-    auto sg = new tpm::SubGraph({op0});
-    for (auto tensor : sg->getTensors())
-        tensor->dataMalloc();
-    for (auto tensor : sg->getInputs())
-        tensor->dataRand();
-    for (auto op : sg->getOperators())
-        op->compute();
-    std::vector<std::shared_ptr<Operator>> candidate_ops;
-    for (auto &op : ops)
-        if (op->getType() == Operator::OpType::Transpose)
-            candidate_ops.emplace_back(op->clone());
-
-    // limit the depth below 3 to avoid large overhead
-    tpm::Generator mutant(false);
-    std::vector<tpm::SubGraph *> candidates;
-    mutant.run(sg, candidates, MAX_RECIPROCITY_DETECT_DEPTH, candidate_ops,
-               0.99F);
-
-    for (auto candidate : candidates) {
-        std::vector<uint64_t> chain;
-        for (auto op : candidate->getOperators()) {
-            chain.push_back(op->getHash());
-        }
-        reciprocal_op_chains.emplace_back(chain);
-    }
-
-    // // debug output
-    // for (auto &chain : reciprocal_op_chains) {
-    //     printf("Reciprocity: ");
-    //     for (auto v : chain)
-    //         printf("%3lu -> ", v);
-    //     puts("");
-    // }
-}
-
-bool Reciprocity::is_tail_reciprocity(const OpVec &oplist) {
-    std::vector<uint64_t> cur_chain;
-    if (oplist.empty())
-        return false;
-    auto cur_op_it = oplist.back();
-    for (int i = 0; i < MAX_RECIPROCITY_DETECT_DEPTH; ++i) {
-        if (!cur_op_it || cur_op_it->getType() != Operator::OpType::Transpose)
-            break;
-        cur_chain.push_back(cur_op_it->getHash());
-        cur_op_it = cur_op_it->getInputs()[0]->getOutputOf();
-    }
-    if (cur_chain.empty())
-        return false;
-    for (auto &target_chain : reciprocal_op_chains) {
-        if (target_chain.size() > cur_chain.size())
-            continue;
-        bool matched = true;
-        for (int i = 0; i < (int)target_chain.size(); ++i)
-            // target_chain is top-down but cur_chain is in
-            // reverse
-            if (target_chain[i] != cur_chain[cur_chain.size() - i - 1]) {
-                matched = false;
-                break;
-            }
-        if (matched)
-            return true;
-    }
-    return false;
-}
-
-bool Reciprocity::is_reciprocity(const OpVec &oplist) {
-    if (oplist.size() > (size_t)MAX_RECIPROCITY_DETECT_DEPTH)
-        return false;
-    std::vector<uint64_t> cur_chain;
-    if (oplist.empty())
-        return false;
-    auto cur_op_it = oplist.back();
-    for (size_t i = 0; i < oplist.size(); ++i) {
-        if (!cur_op_it || cur_op_it->getType() != Operator::OpType::Transpose)
-            break;
-        cur_chain.push_back(cur_op_it->getHash());
-        cur_op_it = cur_op_it->getInputs()[0]->getOutputOf();
-    }
-    if (cur_chain.empty())
-        return false;
-    for (auto &target_chain : reciprocal_op_chains) {
-        if (target_chain.size() != cur_chain.size())
-            continue;
-        bool matched = true;
-        for (int i = 0; i < (int)target_chain.size(); ++i)
-            // target_chain is top-down but cur_chain is in
-            // reverse
-            if (target_chain[i] != cur_chain[cur_chain.size() - i - 1]) {
-                matched = false;
-                break;
-            }
-        if (matched)
-            return true;
-    }
-    return false;
 }

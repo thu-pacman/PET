@@ -1,0 +1,40 @@
+# Pycache
+__pycache__
+
+# Models
+*.onnx
+
+# VSCode
+**/.vscode/*
+
+# Data files
+*.dat
+*.txt
+*.bak
+
+# Log files
+log/
+*.log
+
+# Dummy files
+dummy/
+python/tpm/_cython/core.cpp
+src/Transpose/kernel.py
+
+# Vim
+*.swp
+.ycm_extra_conf.py
+
+# Build
+build/
+build_debug/
+release/*
+nnet/*
+debug/
+bin/
+dist/
+*.egg-info/
+CMakeCache.txt
+CMakeFiles/
+*.out
+res

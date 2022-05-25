@@ -338,13 +338,13 @@ class Tensor {
         for (int i = numDims - 1; i != 0; --i)
             dimSzVec[i - 1] = dimSzVec[i] * dims[i - 1];
         for (size_t i = 0, iEnd = size(); i < iEnd; ++i) {
-            for (size_t j = 0; j + 1 < numDims; ++j) {
+            for (size_t j = 0; j < numDims; ++j) {
                 if (i % dimSzVec[j] == 0) {
                     std::cout << "[";
                 }
             }
             std::cout << data[i];
-            for (size_t j = 0; j + 1 < numDims; ++j) {
+            for (size_t j = 0; j < numDims; ++j) {
                 if ((int)i % dimSzVec[j] == dimSzVec[j] - 1) {
                     std::cout << "]";
                 }
@@ -400,7 +400,12 @@ class Tensor {
     }
 
     void initSplittingPoints() { splittingPoints.resize(getDims().size()); }
+
+    void printShape();
 };
+
+
+void printTensor(tpm::Tensor *tensor);
 
 } // end of namespace tpm
 

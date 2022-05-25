@@ -1,15 +1,20 @@
 #include "search_engine.h"
+#include "cmutator.h"
+#include "nnet/Visitor/FullPrinterVisitor.h"
+#include "nnet/Visitor/MergeMemboundMutator.h"
+#include "nnet/dmutator.h"
 #include "nnet/expr.h"
-#include "nnet/visitor.h"
+#include "nnet/nmutator.h"
 #include "perf_engine.h"
 #include <algorithm>
 #include <iostream>
 #include <unordered_set>
 
 namespace tpm {
-template <typename MutatorT> SearchEngine<MutatorT>::SearchEngine() {
+
+SearchEngine::SearchEngine(const std::shared_ptr<Mutator> &mutationEngine)
+    : mutationEngine(mutationEngine) {
     perfEngine = std::make_shared<PerfEngine>();
-    mutationEngine = std::make_shared<MutatorT>();
     // eliminateEngine = std::make_shared<TransEliminator>();
     auto msenv = getenv("PET_MUTATION_SIZE");
     if (msenv != nullptr)
@@ -19,15 +24,13 @@ template <typename MutatorT> SearchEngine<MutatorT>::SearchEngine() {
         MUTATION_DEPTH = atoi(mdenv);
 }
 
-template <typename MutatorT> SearchEngine<MutatorT>::~SearchEngine() {}
+SearchEngine::~SearchEngine() {}
 
-template <typename MutatorT>
-bool SearchEngine<MutatorT>::Candidate::cmp(const Candidate &a,
-                                            const Candidate &b) {
+bool SearchEngine::Candidate::cmp(const Candidate &a, const Candidate &b) {
     return a.perf < b.perf;
 };
 
-template <typename MutatorT> int SearchEngine<MutatorT>::MetaGraph::print() {
+int SearchEngine::MetaGraph::print() {
     for (size_t i = 0; i < nodes.size(); i++) {
         auto &node = nodes[i];
         std::cout << "id: " << i << std::endl;
@@ -48,13 +51,12 @@ template <typename MutatorT> int SearchEngine<MutatorT>::MetaGraph::print() {
     return 0;
 }
 
-template <typename MutatorT>
-int SearchEngine<MutatorT>::run(const std::shared_ptr<SubGraph> &graph,
-                                std::shared_ptr<SubGraph> &bestGraph) {
+int SearchEngine::run(const std::shared_ptr<SubGraph> &graph,
+                      std::shared_ptr<SubGraph> &bestGraph) {
     int err = 0;
-    double t = 0;
-    t = getPerf(graph, true);
-    std::cout << "Origin Perf: " << t << std::endl;
+    double to = 0, t = 0;
+    to = getPerf(graph, true);
+    std::cout << "Origin Perf: " << to << std::endl;
     graph->printBrief();
     // Partition
     std::vector<std::shared_ptr<SubGraph>> parts;
@@ -88,19 +90,25 @@ int SearchEngine<MutatorT>::run(const std::shared_ptr<SubGraph> &graph,
     bestGraph = std::make_shared<SubGraph>(ops);
     t = getPerf(bestGraph, true);
     std::cout << "Best Unfused Perf: " << t << std::endl;
-    //   for (auto op : bestGraph->getOperators()) {
-    //     if (auto memboundOp = dynamic_cast<MemBoundOp *>(op)) {
-    //       if (memboundOp->getExpr())
-    //         dbg(nnet::FullPrinterVisitor().print(memboundOp->getExpr()));
-    //       else
-    //         dbg("memboundOp NO source expr.");
-    //     }
-    //   }
+    for (auto op : bestGraph->getOperators()) {
+        if (auto memboundOp = dynamic_cast<MemBoundOp *>(op)) {
+            if (memboundOp->getExpr())
+                dbg(nnet::FullPrinterVisitor().print(memboundOp->getExpr()));
+            else
+                dbg("memboundOp NO source expr.");
+        }
+    }
     bestGraph->print();
-    // bestGraph = fuse(bestGraph);
-    bestGraph = strip(bestGraph);
+
+    if (typeid(*mutationEngine) == typeid(Generator) ||
+        typeid(*mutationEngine) == typeid(CMutator))
+        bestGraph = fuse(bestGraph);
+    else if (typeid(*mutationEngine) == typeid(NMutator))
+        bestGraph = strip(bestGraph);
+
     bestGraph->print();
     t = getPerf(bestGraph, true, false);
+    std::cout << "Origin Perf: " << to << std::endl;
     std::cout << "Best Perf without correction: " << t << std::endl;
     t = getPerf(bestGraph, false, true);
     std::cout << "Best Perf with correction: " << t << std::endl;
@@ -109,10 +117,8 @@ int SearchEngine<MutatorT>::run(const std::shared_ptr<SubGraph> &graph,
     return 0;
 }
 
-template <typename MutatorT>
-int SearchEngine<MutatorT>::search(
-    const std::shared_ptr<SubGraph> &graph,
-    std::vector<std::shared_ptr<SubGraph>> &bestGraphs) {
+int SearchEngine::search(const std::shared_ptr<SubGraph> &graph,
+                         std::vector<std::shared_ptr<SubGraph>> &bestGraphs) {
     int err;
     std::shared_ptr<MetaGraph> metaGraph;
     err = split(graph, metaGraph);
@@ -144,9 +150,8 @@ int SearchEngine<MutatorT>::search(
     return 0;
 }
 
-template <typename MutatorT>
-int SearchEngine<MutatorT>::split(const std::shared_ptr<SubGraph> &graph,
-                                  std::shared_ptr<MetaGraph> &metaGraph) {
+int SearchEngine::split(const std::shared_ptr<SubGraph> &graph,
+                        std::shared_ptr<MetaGraph> &metaGraph) {
     int n = graph->getOperators().size();
     auto &opList = graph->getOperators();
     std::vector<int> cnt(n, 0);
@@ -187,8 +192,7 @@ int SearchEngine<MutatorT>::split(const std::shared_ptr<SubGraph> &graph,
     return 0;
 }
 
-template <typename MutatorT>
-int SearchEngine<MutatorT>::searchDfs(
+int SearchEngine::searchDfs(
     const std::shared_ptr<MetaGraph> &metaGraph,
     std::vector<std::shared_ptr<MetaGraph>> &metaGraphs) {
     int err = 0;
@@ -255,11 +259,10 @@ int SearchEngine<MutatorT>::searchDfs(
     return 0;
 }
 
-template <typename MutatorT>
-int SearchEngine<MutatorT>::searchDfs(
-    const std::shared_ptr<MetaGraph> &metaGraph, std::vector<int> &frontier,
-    std::vector<int> &f, std::vector<std::vector<int>> &candidates,
-    std::unordered_set<uint64_t> &candidateSet) {
+int SearchEngine::searchDfs(const std::shared_ptr<MetaGraph> &metaGraph,
+                            std::vector<int> &frontier, std::vector<int> &f,
+                            std::vector<std::vector<int>> &candidates,
+                            std::unordered_set<uint64_t> &candidateSet) {
     int err;
     int n = f.size(), m = frontier.size();
     if (m == 0) {
@@ -375,10 +378,8 @@ int SearchEngine<MutatorT>::searchDfs(
     return 0;
 }
 
-template <typename MutatorT>
-int SearchEngine<MutatorT>::searchBfs(
-    const std::shared_ptr<MetaGraph> &metaGraph,
-    std::vector<Candidate> &candidates) {
+int SearchEngine::searchBfs(const std::shared_ptr<MetaGraph> &metaGraph,
+                            std::vector<Candidate> &candidates) {
     int err = 0;
     std::cout << "start search bfs." << std::endl;
     candidates.clear();
@@ -434,44 +435,40 @@ int SearchEngine<MutatorT>::searchBfs(
     return 0;
 }
 
-template <typename MutatorT>
-int SearchEngine<MutatorT>::isMergeable(
-    const std::shared_ptr<SubGraph> &graph) {
+int SearchEngine::isMergeable(const std::shared_ptr<SubGraph> &graph) {
     if (graph->getOperators().size() <= 1) {
         return 1;
     }
     auto stat = mutationEngine->statGraph(graph.get());
-    if (stat == MutatorT::GroupConv || stat == MutatorT::TransposeGroupConv ||
-        stat == MutatorT::BatchMatmul) {
+    if (stat == Mutator::GroupConv || stat == Mutator::TransposeGroupConv ||
+        stat == Mutator::BatchMatmul || stat == Mutator::HetConv) {
         return 1;
     }
     return 0;
 }
 
-template <typename MutatorT>
-int SearchEngine<MutatorT>::isMutatable(
-    const std::shared_ptr<SubGraph> &graph) {
+int SearchEngine::isMutatable(const std::shared_ptr<SubGraph> &graph) {
     std::cout << "[ERROR] search_engine::isMutatable: function not impl."
               << std::endl;
     return 0;
 }
 
-template <typename MutatorT>
-int SearchEngine<MutatorT>::isSpecialMutation(Operator *op, int depth) {
+int SearchEngine::isSpecialMutation(Operator *op, int depth) {
     std::vector<Operator *> ops;
     ops.emplace_back(op);
     auto graph = std::make_shared<SubGraph>(ops);
     auto stat = mutationEngine->statGraph(graph.get());
-    if (stat == MutatorT::NormalOddConv && (depth < 3)) {
+    if (stat == Mutator::NormalOddConv && (depth < 3)) {
         return 1;
     }
     return 0;
 }
 
-template <typename MutatorT>
-double SearchEngine<MutatorT>::getPerf(const std::shared_ptr<SubGraph> &graph,
-                                       bool profiling, bool withPenalty) {
-    double time = 0;
+double SearchEngine::getPerf(const std::shared_ptr<SubGraph> &graph,
+                             bool profiling, bool withPenalty) {
+    double totTime = 0;
+    std::map<Operator::OpType, double> opTime; // Statistics
+    std::map<Operator::OpType, int> opCnt;
     perfEngine->setPenalty(withPenalty);
     if (profiling)
         puts("\n========== PET graph getPerf ============");
@@ -480,20 +477,25 @@ double SearchEngine<MutatorT>::getPerf(const std::shared_ptr<SubGraph> &graph,
         if (profiling) {
             op->print();
             printf(" op_time %lf\n", t);
+            opTime[op->getType()] += t;
+            opCnt[op->getType()]++;
         }
-        time += t;
-        // print detailed perf data
-        // auto t = op->perf(perfEngine.get(), 10);
-        // time += t;
-        // printf("%s %f\n", op->toString().data(), t);
+        totTime += t;
     }
-    return time;
+    if (profiling) {
+        printf("%11s %3s %7s %7s %7s\n", "Op", "Cnt", "T_tot", "Percent",
+               "T_mean");
+        for (const auto &[type, t] : opTime) {
+            printf("%11s %3d %7.3f %7.1f %7.3f\n",
+                   Operator::getOpName(type).data(), opCnt[type], t,
+                   t / totTime * 100, t / opCnt[type]);
+        }
+    }
+    return totTime;
 }
 
-template <typename MutatorT>
-double
-SearchEngine<MutatorT>::getMaxPerf(const std::shared_ptr<SubGraph> &graph,
-                                   bool profiling, bool withPenalty) {
+double SearchEngine::getMaxPerf(const std::shared_ptr<SubGraph> &graph,
+                                bool profiling, bool withPenalty) {
     double time = 0;
     perfEngine->setPenalty(withPenalty);
     for (auto op : graph->getOperators()) {
@@ -503,9 +505,7 @@ SearchEngine<MutatorT>::getMaxPerf(const std::shared_ptr<SubGraph> &graph,
     return time;
 }
 
-template <typename MutatorT>
-double
-SearchEngine<MutatorT>::getTransPerf(const std::shared_ptr<SubGraph> &graph) {
+double SearchEngine::getTransPerf(const std::shared_ptr<SubGraph> &graph) {
     double time = 0;
     for (auto op : graph->getOperators()) {
         if (op->isTransposeOp()) {
@@ -521,8 +521,7 @@ SearchEngine<MutatorT>::getTransPerf(const std::shared_ptr<SubGraph> &graph) {
 }
 
 // get mutations after MUTATION_DEPTH rounds.
-template <typename MutatorT>
-int SearchEngine<MutatorT>::getMutation(
+int SearchEngine::getMutation(
     std::shared_ptr<SubGraph> &graph,
     std::vector<std::shared_ptr<SubGraph>> &mutatedGraphs) {
     // return archived mutation if existed.
@@ -675,21 +674,25 @@ int SearchEngine<MutatorT>::getMutation(
             int nextDepth;
             if (corpOps.size() == 1) {
                 computeOp = corpOps[0];
-                if (computeOp->getType() == Operator::Conv) {
+                if (computeOp->getType() == Operator::Conv ||
+                    computeOp->getType() == Operator::G2BMM ||
+                    computeOp->getType() == Operator::GBMML) {
                     mutationHash = getMutationHash(computeOp);
                     if (mutationSet.find(mutationHash) != mutationSet.end()) {
                         continue;
                     }
                     mutationSet.emplace(mutationHash);
-                    // Special mutation, such as 5 depth mutation.
+                    // Hack: Special mutation, such as 5 depth mutation.
                     if (isSpecialMutation(computeOp, f[i])) {
                         nextDepth = f[i];
                     } else {
                         nextDepth = f[i] + 1;
                     }
-                }
-                if (computeOp->getType() == Operator::Matmul) {
+                } else if (computeOp->getType() == Operator::Matmul) {
                     nextDepth = MUTATION_DEPTH;
+                } else {
+                    // ComputeOp not impl
+                    assert(false);
                 }
             }
             if (corpOps.size() > 1) {
@@ -729,8 +732,7 @@ int SearchEngine<MutatorT>::getMutation(
 }
 
 // get mutation of a subgraph.
-template <typename MutatorT>
-int SearchEngine<MutatorT>::getSingleMutation(
+int SearchEngine::getSingleMutation(
     std::shared_ptr<SubGraph> &graph,
     std::vector<std::shared_ptr<SubGraph>> &candidates) {
     int err = 0;
@@ -759,13 +761,14 @@ int SearchEngine<MutatorT>::getSingleMutation(
     return 0;
 }
 
-template <typename MutatorT>
-uint64_t SearchEngine<MutatorT>::getMutationHash(const Operator *op) {
+uint64_t SearchEngine::getMutationHash(const Operator *op) {
     uint64_t hash;
     switch (op->getType()) {
     case Operator::Conv:
     case Operator::ConvTrans:
     case Operator::Matmul:
+    case Operator::G2BMM:
+    case Operator::GBMML:
         hash = mutationEngine->computeHashForSingleComputeOp(op);
         break;
     default:
@@ -776,9 +779,8 @@ uint64_t SearchEngine<MutatorT>::getMutationHash(const Operator *op) {
     return hash;
 }
 
-template <typename MutatorT>
 std::vector<std::shared_ptr<SubGraph>>
-SearchEngine<MutatorT>::partition(const std::shared_ptr<SubGraph> &graph) {
+SearchEngine::partition(const std::shared_ptr<SubGraph> &graph) {
     // reversed DFS post-order is topo-order
     std::unordered_map<const Operator *, int> preOrder, postOrder;
     std::vector<Operator *> ops;
@@ -832,9 +834,8 @@ SearchEngine<MutatorT>::partition(const std::shared_ptr<SubGraph> &graph) {
     return ret;
 }
 
-template <typename MutatorT>
 std::shared_ptr<SubGraph>
-SearchEngine<MutatorT>::fuse(const std::shared_ptr<SubGraph> &graph) {
+SearchEngine::fuse(const std::shared_ptr<SubGraph> &graph) {
     std::shared_ptr<SubGraph> tmpGraph(new SubGraph(graph->getOperators()));
     for (Operator *op : tmpGraph->getOperators()) {
         if (op->getType() == Operator::Activation) {
@@ -890,10 +891,8 @@ SearchEngine<MutatorT>::fuse(const std::shared_ptr<SubGraph> &graph) {
     return newGraph;
 }
 
-template <typename MutatorT>
-int SearchEngine<MutatorT>::stripDfs(Operator *op,
-                                     std::unordered_map<int, int> &f,
-                                     int flag) {
+int SearchEngine::stripDfs(Operator *op, std::unordered_map<int, int> &f,
+                           int flag) {
     std::cout << "[DEBUG]" << op->getType() << " " << op->getInputs().size()
               << " " << op->getOutputs().size() << std::endl;
     assert(op->getInputs().size() == 1 && op->getOutputs().size() == 1);
@@ -913,53 +912,74 @@ int SearchEngine<MutatorT>::stripDfs(Operator *op,
     return 0;
 }
 
+nnet::Expr transposeOpToExpression(TransposeOp *transposeOp) {
+    const auto &AT = transposeOp->getInputs()[0];
+    const auto &[before, after] = transposeOp->getBeforeAndAfter();
+    for (size_t i = 0; i < before.size(); ++i) {
+        assert(before[i].isSingle() && before[i].getSingle() == (int)i);
+    }
+    const auto A = nnet::makeTensor("A", AT->getDims());
+    std::vector<nnet::VarRangePair> loopVarsN;
+    nnet::VecExpr subscriptN(after.size());
+    for (size_t i = 0; i < after.size(); ++i) {
+        assert(after[i].isSingle());
+        const auto loopVar =
+            nnet::make_ref<nnet::VarNode>("i" + std::to_string(i));
+        loopVarsN.emplace_back(
+            loopVar, std::make_pair(0, A->getShape(after[i].getSingle())));
+        subscriptN[after[i].getSingle()] = loopVar;
+    }
+    return nnet::makeRangeOperator(loopVarsN, {},
+                                   nnet::makeSubscript(A, subscriptN));
+}
+
 nnet::Expr toExpr(Operator *op) {
-    //   if (op->getType() == Operator::MemBound) {
-    //     auto memboundOp = dynamic_cast<MemBoundOp *>(op);
-    //     return memboundOp->getExpr();
-    //   }
-    //   if (op->getType() == Operator::Activation ||
-    //       op->getType() == Operator::Tanh) {
-    //     int nDim = op->getInputs()[0]->getDims().size();
-    //     std::vector<int> shape = op->getInputs()[0]->getDims();
-    //     std::vector<int> paddings(nDim);
-    //     std::vector<nnet::Expr> vars(nDim);
-    //     std::vector<nnet::VarRangePair> varRangePair(nDim);
-    //     for (int i = 0; i < nDim; i++) {
-    //       auto var = std::make_shared<nnet::VarNode>("var" +
-    //       std::to_string(i)); paddings[i] = 0; vars[i] = var; varRangePair[i]
-    //       = {var, {0, shape[i]}};
-    //     }
-    //     auto tensor = std::make_shared<nnet::TensorNode>("T", shape,
-    //     paddings); auto subscript = makeSubscript(tensor, vars); if
-    //     (op->getType() == Operator::Activation) {
-    //       auto activationOp = dynamic_cast<ActivationOp *>(op);
-    //       if (activationOp->getActType() == Operator::Relu) {
-    //         auto relu =
-    //             std::make_shared<nnet::FuncNode>(subscript,
-    //             nnet::FuncType::Relu);
-    //         return nnet::makeRangeOperator(varRangePair, {}, relu);
-    //       }
-    //     }
-    //     if (op->getType() == Operator::Tanh) {
-    //       auto tanh =
-    //           std::make_shared<nnet::FuncNode>(subscript,
-    //           nnet::FuncType::Tanh);
-    //       return nnet::makeRangeOperator(varRangePair, {}, tanh);
-    //     }
-    //     // if (activationOp->getActType() == Operator::Sigmoid) {
-    //     //     auto sigmoid = std::make_shared<nnet::FuncNode>(
-    //     //         subscript, nnet::FuncType::Sigmoid);
-    //     //     auto range = nnet::makeRangeOperator(varRangePair, sigmoid);
-    //     // }
-    //   }
+    if (op->getType() == Operator::MemBound) {
+        auto memboundOp = dynamic_cast<MemBoundOp *>(op);
+        return memboundOp->getExpr();
+    }
+    if (op->getType() == Operator::Activation) {
+        int nDim = op->getInputs()[0]->getDims().size();
+        std::vector<int> shape = op->getInputs()[0]->getDims();
+        std::vector<int> paddings(nDim);
+        std::vector<nnet::Expr> vars(nDim);
+        std::vector<nnet::VarRangePair> varRangePair(nDim);
+        for (int i = 0; i < nDim; i++) {
+            auto var = nnet::make_ref<nnet::VarNode>("var" + std::to_string(i));
+            paddings[i] = 0;
+            vars[i] = var;
+            varRangePair[i] = {var, {0, shape[i]}};
+        }
+        auto tensor = nnet::make_ref<nnet::TensorNode>("T", shape, paddings);
+        auto subscript = makeSubscript(tensor, vars);
+        if (op->getType() == Operator::Activation) {
+            auto activationOp = dynamic_cast<ActivationOp *>(op);
+            if (activationOp->getActType() == Operator::Relu) {
+                auto act = nnet::make_ref<nnet::FuncNode>(subscript,
+                                                          nnet::FuncType::Relu);
+                return nnet::makeRangeOperator(varRangePair, {}, act);
+            } else if (activationOp->getActType() == Operator::Tanh) {
+                auto act = nnet::make_ref<nnet::FuncNode>(subscript,
+                                                          nnet::FuncType::Tanh);
+                return nnet::makeRangeOperator(varRangePair, {}, act);
+            } else
+                nnet_unimplemented_halt();
+        }
+
+        // if (activationOp->getActType() == Operator::Sigmoid) {
+        //     auto sigmoid = std::make_shared<nnet::FuncNode>(
+        //         subscript, nnet::FuncType::Sigmoid);
+        //     auto range = nnet::makeRangeOperator(varRangePair, sigmoid);
+        // }
+    }
+    if (op->getType() == Operator::Transpose) {
+        return transposeOpToExpression((TransposeOp *)op);
+    }
     assert(false);
     return nullptr;
 }
 
-template <typename MutatorT>
-Operator *
-SearchEngine<MutatorT>::FuseMemBoundChain(std::vector<Operator *> chainOps) {
+Operator *SearchEngine::FuseMemBoundChain(std::vector<Operator *> chainOps) {
     std::cout << "[DEBUG] FuseMemBoundChain" << std::endl;
     if (chainOps.size() == 1) {
         return chainOps[0];
@@ -975,19 +995,20 @@ SearchEngine<MutatorT>::FuseMemBoundChain(std::vector<Operator *> chainOps) {
         exprs.emplace_back(toExpr(op));
     }
     double maxTime = getMaxPerf(std::make_shared<SubGraph>(chainOps));
-    // Dummy code for merge exprs
-    // auto expr = nnet::Derivator().mergeMemboundStages(exprs);
-    nnet::Expr expr;
+    // Fuse a MemboundOp chain
+    auto expr = nnet::MergeMemboundMutator(exprs).merge(true);
+
+    // FIXME: use real NNet inputs for verification
+    printf("Unimplememnted for verification\n");
     auto memBoundOp =
         new MemBoundOp(chainOps.front()->getInputs(),
-                       chainOps.back()->getOutputs(), expr, maxTime);
+                       chainOps.back()->getOutputs(), {}, expr, maxTime);
     memBoundOp->print();
     return memBoundOp;
 }
 
-template <typename MutatorT>
 std::shared_ptr<SubGraph>
-SearchEngine<MutatorT>::strip(const std::shared_ptr<SubGraph> &graph) {
+SearchEngine::strip(const std::shared_ptr<SubGraph> &graph) {
     std::unordered_map<int, int> f;
     std::vector<Operator *> ops;
     int cnt = 0;
@@ -1023,19 +1044,48 @@ SearchEngine<MutatorT>::strip(const std::shared_ptr<SubGraph> &graph) {
             chainOps.emplace_back(cur);
             f.emplace(cur->getGuid(), cnt);
         }
+        int len = chainOps.size();
+        std::cout << "[DEBUG] before swap: begin" << std::endl;
+        std::make_shared<SubGraph>(chainOps)->print();
+        std::cout << "[DEBUG] before swap: end" << std::endl;
+
+        for (int i = 1; i < len; i++) {
+            if (!chainOps[i]->isElementWiseOp()) {
+                continue;
+            }
+            int j = i;
+            while (j > 0 && chainOps[j - 1]->isTransposeOp()) {
+                auto a = chainOps[j - 1], b = chainOps[j];
+                auto tmp = a->getOutputs();
+                a->setOutputs(b->getOutputs());
+                b->setInputs(a->getInputs());
+                a->setInputs(tmp);
+                b->setOutputs(tmp);
+                auto tmpa = a->getSuccessors(), tmpb = b->getPredecessors();
+                a->setSuccessors(b->getSuccessors());
+                b->setPredecessors(a->getPredecessors());
+                a->setPredecessors(tmpb);
+                b->setSuccessors(tmpa);
+                // Re-compute shape
+                b->computeShape();
+                a->computeShape();
+                chainOps[j - 1] = b;
+                chainOps[j] = a;
+                j--;
+            }
+        }
+        std::cout << "[DEBUG] after swap: begin" << std::endl;
+        std::make_shared<SubGraph>(chainOps)->print();
+        std::cout << "[DEBUG] after swap: end" << std::endl;
+
         ops.emplace_back(FuseMemBoundChain(chainOps));
     }
 
     return std::make_shared<SubGraph>(ops);
 }
 
-template <typename MutatorT>
-std::shared_ptr<PerfEngine> SearchEngine<MutatorT>::exportPerfEngine() {
+std::shared_ptr<PerfEngine> SearchEngine::exportPerfEngine() {
     return perfEngine;
 }
-
-template class tpm::SearchEngine<tpm::Generator>;
-// template class tpm::SearchEngine<tpm::NMutator>;
-// template class tpm::SearchEngine<tpm::DMutator>;
 
 } // namespace tpm

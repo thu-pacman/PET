@@ -1,21 +1,24 @@
 #ifndef GENERATOR_H
 #define GENERATOR_H
 
-#include "graph.h"
+#include "mutator.h"
+#include "reciprocity.h"
 #include <unordered_set>
 
-#define EQOPT if (!enable_eq_opt) { \
-                  return; \
-              }
-#define NEQOPT if (!enable_non_eq_opt) { \
-                  return; \
-              }
+#define EQOPT                                                                  \
+    if (!enable_eq_opt) {                                                      \
+        return;                                                                \
+    }
+#define NEQOPT                                                                 \
+    if (!enable_non_eq_opt) {                                                  \
+        return;                                                                \
+    }
 
 namespace tpm {
 
 class Reciprocity;
 
-class Generator {
+class Generator : public Mutator {
     float equal_threshold;
     size_t num_valid_tensors, num_total_tensors;
     int max_depth;
@@ -42,19 +45,6 @@ class Generator {
     bool enable_eq_opt, enable_non_eq_opt;
 
   public:
-    enum SGType {
-        Empty,
-        NormalConv,
-        NormalOddConv,
-        DilatedConv,
-        TransKernelConv,
-        GroupConv,
-        TransposeGroupConv,
-        Conv1X1,
-        NormalMatmul,
-        BatchMatmul,
-        Others,
-    };
     Generator(bool prune_reciprocity = true);
     ~Generator() {
         if (searchingGraph != nullptr)
@@ -133,24 +123,6 @@ class Generator {
     void markTransType(SubGraph *inputGraph, SubGraph *outputGraph);
     void splitGroupConv(SubGraph *sg, std::vector<SubGraph *> &out_graphs);
     bool validDepth(SubGraph *sg);
-};
-
-class Reciprocity {
-    const int MAX_RECIPROCITY_DETECT_DEPTH = 3;
-
-  public:
-    Reciprocity(const std::vector<std::shared_ptr<Operator>> &ops);
-    // find reciprocities among given ops
-    void search_reciprocity(const std::vector<std::shared_ptr<Operator>> &ops);
-    // check whether the latest op and its parents are reciprocal
-    bool is_tail_reciprocity(const OpVec &oplist);
-    // check whether all the ops are reciprocal
-    bool is_reciprocity(const OpVec &oplist);
-
-    // reciprocal ops chains detected by search_reciprocity
-    std::vector<std::vector<uint64_t>> reciprocal_op_chains;
-
-    int maxDetectDepth() const { return MAX_RECIPROCITY_DETECT_DEPTH; }
 };
 } // end of namespace tpm
 #endif

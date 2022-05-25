@@ -63,6 +63,7 @@ class CodeEngine {
     void genConvTransDesc(const ConvTransOp &op);
     void genG2BMMDesc(const G2BMMOp &op);
     void genGBMMLDesc(const GBMMLOp &op);
+    void genBatchNormDesc(const BatchNormOp &op);
 
     // Compute generator
     void genConvCompute(const ConvOp &op);
@@ -84,6 +85,8 @@ class CodeEngine {
     void genConvTransCompute(const ConvTransOp &op);
     void genG2BMMCompute(const G2BMMOp &op);
     void genGBMMLCompute(const GBMMLOp &op);
+    void genReduce_merge_conv_3x3_1x1(const MemBoundOp &op);
+    void genBatchNormCompute(const BatchNormOp &op);
 
     // Code tools
     int clear();

@@ -5783,15 +5783,17 @@ inline void sgbmml(float *__restrict__ q, float *__restrict__ k,
     assert(w == 1000);
     if (d == 1) {
         for (int i = 0; i < bs; i += 8) {
+            // Hacks for OOM
             gbmml_bs1_n10000_m64_w1000_d1_kernel0<<<2500, 256>>>(
-                q + i * n * (2 * w + 1), k + i * n * m,
-                y + i * n * m);
+                q +  n * (2 * w + 1), k +  n * m,
+                y +  n * m);
         }
     } else if (d == 4) {
         for (int i = 0; i < bs; i += 8) {
+            // Hacks for OOM
             gbmml_bs1_n10000_m64_w1000_d4_kernel0<<<800, 320>>>(
-                q + i * n * (2 * w + 1), k + i * n * m,
-                y + i * n * m);
+                q + n * (2 * w + 1), k +  n * m,
+                y + n * m);
         }
     } else {
         assert(false);

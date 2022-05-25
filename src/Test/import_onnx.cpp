@@ -15,7 +15,7 @@ int main(int argc, char **argv) {
 
     std::shared_ptr<tpm::SubGraph> graph, bestGraph;
     graph = std::make_shared<tpm::SubGraph>(g->getOperators());
-    tpm::SearchEngine<tpm::Generator> searchEngine;
+    tpm::SearchEngine searchEngine(std::make_shared<tpm::Generator>());
     searchEngine.run(graph, bestGraph);
 
     std::cout << "Search Finished" << std::endl;
@@ -28,7 +28,7 @@ int main(int argc, char **argv) {
     codeEngine.importPerfEngine(perfEngine);
     codeEngine.genCode(graph, "origin.cu");
 
-    //bestGraph->exportOnnx("pet-optimization.onnx");
-    
+    bestGraph->exportOnnx("pet-optimization.onnx");
+
     return 0;
 }
