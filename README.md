@@ -13,7 +13,7 @@ See [README.pdf](README.pdf) A.4 to install PET from source.
 
 ## Publication
 
-Wang, Haojie, Jidong Zhai, Mingyu Gao, Zixuan Ma, Shizhi Tang, Liyan Zheng, Yuanzhi Li, Kaiyuan Rong, Yuanyong Chen, and Zhihao Jia. "PET: Optimizing Tensor Programs with Partially Equivalent Transformations and Automated Corrections." In 15th USENIX Symposium on Operating Systems Design and Implementation (OSDI 21), pp. 37-54. 2021.
+Wang, Haojie, Jidong Zhai, Mingyu Gao, Zixuan Ma, Shizhi Tang, Liyan Zheng, Yuanzhi Li, Kaiyuan Rong, Yuanyong Chen, and Zhihao Jia. "[PET: Optimizing Tensor Programs with Partially Equivalent Transformations and Automated Corrections.](https://pacman.cs.tsinghua.edu.cn/~whj/pubs/Pet.pdf)" In 15th USENIX Symposium on Operating Systems Design and Implementation (OSDI 21), pp. 37-54. 2021.
 
 ## Contributors
 
