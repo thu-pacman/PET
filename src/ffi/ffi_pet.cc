@@ -24,6 +24,7 @@ void initGraph(py::module &m) {
     py::class_<TensorVec>(m, "TensorVec");
     py::class_<PermItem>(m, "PermItem")
         .def(py::init<>())
+        .def(py::init<int>())
         .def(py::init<const std::vector<int> &>())
         .def(py::init<std::initializer_list<int>>());
     py::class_<Perm>(m, "Perm")
